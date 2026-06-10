@@ -41,7 +41,7 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:latest
-    container_name: clickhouse
+    container_name: spikeiq_clickhouse
     restart: always
     environment:
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-trade_analytics_us}

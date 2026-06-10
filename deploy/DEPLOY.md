@@ -1,6 +1,6 @@
 # SpikeIQ US — VPS Deployment Guide
 
-Deploy to **http://spikeiq.mooo.com/** alongside existing Docker apps without disrupting them.
+Deploy to **https://spikeiq.mooo.com/** alongside existing Docker apps without disrupting them.
 
 ## Architecture
 
@@ -49,7 +49,29 @@ sudo nginx -t && sudo systemctl reload nginx
 
 Ensure DNS for `spikeiq.mooo.com` points to your VPS IP.
 
-## 4. Updates
+## 4. Enable HTTPS (Let's Encrypt)
+
+Your VPS already uses Certbot for other sites. Add SSL for SpikeIQ:
+
+```bash
+sudo certbot --nginx -d spikeiq.mooo.com
+```
+
+When prompted:
+- Enter email for renewal notices
+- Agree to terms
+- Choose **redirect HTTP → HTTPS** (recommended)
+
+Verify:
+
+```bash
+curl -s https://spikeiq.mooo.com/api/status
+sudo certbot renew --dry-run
+```
+
+Certbot auto-renews. It updates `/etc/nginx/sites-available/spikeiq.mooo.com` with SSL and does not affect other vhosts.
+
+## 5. Updates
 
 ```bash
 cd /opt/spikeiq_us
@@ -58,14 +80,30 @@ cd docker
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
+## 6. ClickHouse UI (optional)
+
+SpikeIQ ClickHouse uses host port **8126** (not 8123) to avoid conflicting with other products.
+
+```bash
+sudo cp ~/spikeiq_us/deploy/host-nginx-ch.spikeiq.mooo.com.conf \
+  /etc/nginx/sites-available/ch.spikeiq.mooo.com
+sudo ln -sf /etc/nginx/sites-available/ch.spikeiq.mooo.com /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d ch.spikeiq.mooo.com
+```
+
+Add DNS: `ch.spikeiq.mooo.com` → VPS IP.
+
+Open **https://ch.spikeiq.mooo.com/play** and log in with `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` from `docker/.env`.
+
 ## Port reference
 
 | Service     | Production exposure        |
 |------------|----------------------------|
 | nginx      | 127.0.0.1:9080 (host only) |
+| clickhouse | 127.0.0.1:8126 (host HTTP) |
 | backend    | internal only              |
 | frontend   | internal only              |
-| clickhouse | internal only              |
 | kafka      | internal only              |
 | ib-gateway | 127.0.0.1:4002, :5900 VNC  |
 

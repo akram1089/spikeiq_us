@@ -31,6 +31,7 @@ from src.workers.subscription_worker import SubscriptionWorker
 from src.workers.tick_ingestion_worker import TickIngestionWorker
 from src.auth.router import router as auth_router
 from src.market.router import router as market_router
+from config import settings
 
 # Patch asyncio to work with existing uvicorn event loops
 util.patchAsyncio()
@@ -141,6 +142,28 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(market_router)
 
+
+@app.get("/api/stats/today-ticks")
+async def get_today_ticks_count():
+    """Global tick count for today (ET) — same for all users."""
+    try:
+        client = ch_manager.get_client()
+        result = client.query(
+            f"""
+            SELECT count() AS cnt
+            FROM {settings.CLICKHOUSE_DB}.raw_ticks
+            WHERE toDate(ts, 'America/New_York') = toDate(now('America/New_York'))
+            """
+        )
+        count = int(result.result_rows[0][0]) if result.result_rows else 0
+        return {
+            "count": count,
+            "timezone": "America/New_York",
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching today ticks count: {e}")
+        return {"count": 0, "error": str(e)}
 
 @app.get("/api/status")
 async def get_status():

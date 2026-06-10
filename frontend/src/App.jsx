@@ -361,17 +361,8 @@ export default function App() {
     localStorage.setItem('sidebar_collapsed', sidebarCollapsed);
   }, [sidebarCollapsed]);
 
-  // Live ticks count — resets to 0 on each new ET trading day
-  const [totalTicksCount, setTotalTicksCount] = useState(() => {
-    const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-    const savedDate = sessionStorage.getItem('tick_count_date');
-    const savedCount = sessionStorage.getItem('total_ticks_count');
-    // Reset if it's a new day or no saved value exists
-    if (savedDate === todayET && savedCount) {
-      return parseInt(savedCount, 10);
-    }
-    return 0;
-  });
+  // Global today's tick count (shared across all users, fetched from ClickHouse)
+  const [totalTicksCount, setTotalTicksCount] = useState(0);
 
   const [digitalClockTime, setDigitalClockTime] = useState('');
 
@@ -514,12 +505,23 @@ export default function App() {
     setPriceSpikeAlerts(initialAlerts);
   }, []);
 
-  // Persist tick count with today's ET date for daily reset logic
+  // Poll global today-ticks count from backend (same for every user)
   useEffect(() => {
-    const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-    sessionStorage.setItem('total_ticks_count', totalTicksCount);
-    sessionStorage.setItem('tick_count_date', todayET);
-  }, [totalTicksCount]);
+    const fetchTodayTicks = async () => {
+      try {
+        const res = await fetch(`${restUrl}/stats/today-ticks`);
+        if (res.ok) {
+          const data = await res.json();
+          setTotalTicksCount(data.count ?? 0);
+        }
+      } catch {
+        // keep last known count on transient errors
+      }
+    };
+    fetchTodayTicks();
+    const interval = setInterval(fetchTodayTicks, 3000);
+    return () => clearInterval(interval);
+  }, [restUrl]);
 
   // Apply light/dark theme class and adjust chart theme options
   useEffect(() => {
@@ -777,9 +779,6 @@ export default function App() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.error || !data.symbol) return;
-
-        // Increment today's ticks counter dynamically
-        setTotalTicksCount(prev => prev + 1);
 
         const sym = data.symbol;
         const bid = parseFloat(data.bid);
