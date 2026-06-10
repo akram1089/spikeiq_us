@@ -7,7 +7,7 @@ services:
     container_name: spikeiq_clickhouse
     ports: !override
       # 8126 avoids conflict with other ClickHouse on host port 8123
-      - "127.0.0.1:8126:8123"
+      - "8126:8123"
 
   kafka:
     ports: !reset []

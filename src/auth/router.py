@@ -37,9 +37,9 @@ async def register(req: AuthRequest):
         
     client = ch_manager.get_client()
     try:
-        # Check if username exists
+        # Case-insensitive duplicate check (Koti and koti are the same user)
         existing = client.query(
-            f"SELECT username FROM {USERS_TABLE} WHERE username = %(u)s LIMIT 1",
+            f"SELECT username FROM {USERS_TABLE} WHERE lower(username) = lower(%(u)s) LIMIT 1",
             parameters={"u": username}
         )
         if existing.result_rows:
@@ -67,20 +67,21 @@ async def login(req: AuthRequest):
     client = ch_manager.get_client()
     try:
         res = client.query(
-            f"SELECT username, password_hash FROM {USERS_TABLE} WHERE username = %(u)s LIMIT 1",
+            f"SELECT username, password_hash FROM {USERS_TABLE} WHERE lower(username) = lower(%(u)s) LIMIT 1",
             parameters={"u": username}
         )
         if not res.result_rows:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
         user_row = res.result_rows[0]
+        canonical_username = user_row[0]
         stored_hash = user_row[1]
         
         if not jwt_handler.verify_password(req.password, stored_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        token = jwt_handler.create_access_token({"sub": username})
-        return {"access_token": token, "token_type": "bearer", "username": username}
+        token = jwt_handler.create_access_token({"sub": canonical_username})
+        return {"access_token": token, "token_type": "bearer", "username": canonical_username}
     except HTTPException:
         raise
     except Exception as e:

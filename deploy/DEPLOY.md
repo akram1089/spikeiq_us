@@ -94,14 +94,21 @@ sudo certbot --nginx -d ch.spikeiq.mooo.com
 
 Add DNS: `ch.spikeiq.mooo.com` → VPS IP.
 
-Open **https://ch.spikeiq.mooo.com/play** and log in with `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` from `docker/.env`.
+Open **https://ch.spikeiq.mooo.com/play** (or `http://YOUR_VPS_IP:8126/play`) and log in with `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` from `docker/.env`.
+
+If port 8126 times out from your PC, open the firewall on the VPS:
+
+```bash
+sudo ufw allow 8126/tcp
+sudo ufw reload
+```
 
 ## Port reference
 
 | Service     | Production exposure        |
 |------------|----------------------------|
 | nginx      | 127.0.0.1:9080 (host only) |
-| clickhouse | 127.0.0.1:8126 (host HTTP) |
+| clickhouse | 8126 (host HTTP, public)     |
 | backend    | internal only              |
 | frontend   | internal only              |
 | kafka      | internal only              |
