@@ -1,0 +1,37 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!docker/.env.example
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Logs and runtime data
+logs/
+*.log
+backend_logs.txt
+
+# IB Gateway local data (use Docker volumes on VPS)
+ibgateway_home/
+ibc_folder/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+.tempmediaStorage/
+*.resolved

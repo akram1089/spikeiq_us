@@ -1,0 +1,20 @@
+# Use Node.js base image
+FROM node:20-slim
+
+# Set work directory
+WORKDIR /app
+
+# Copy package files first
+COPY frontend/package*.json ./
+
+# Install packages
+RUN npm install
+
+# Copy frontend source code
+COPY frontend/ .
+
+# Expose Vite dev port
+EXPOSE 5173
+
+# Start Vite server in host mode for external access
+CMD ["npm", "run", "dev", "--", "--host"]

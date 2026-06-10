@@ -1,0 +1,17 @@
+# Ignore local virtual environment and node modules
+venv/
+frontend/node_modules/
+node_modules/
+logs/
+.git/
+.github/
+.gemini/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+*.db
+*.log
+.tempmediaStorage/
+*.resolved
