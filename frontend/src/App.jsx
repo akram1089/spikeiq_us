@@ -434,8 +434,10 @@ export default function App() {
   const openPriceRef = useRef(null);
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const restUrl = import.meta.env.DEV ? 'http://localhost:8000/api' : '/api';
-  const wsUrl = import.meta.env.DEV
+  const isLocalDev = import.meta.env.DEV &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const restUrl = isLocalDev ? 'http://localhost:8000/api' : '/api';
+  const wsUrl = isLocalDev
     ? 'ws://localhost:8000/api/ws'
     : `${wsProtocol}//${window.location.host}/api/ws`;
 
