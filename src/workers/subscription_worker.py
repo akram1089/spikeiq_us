@@ -66,13 +66,9 @@ class SubscriptionWorker(threading.Thread):
                 )
                 logger.success(f"ClickHouse subscription updated for {user_id} -> {symbol} ({action})")
 
-                # 2. Dynamic Update to Interactive Brokers live stream
+                # 2. Ensure IB streaming for new symbols (unsubscribe is UI-only; pipeline keeps running)
                 if action == "SUBSCRIBE":
-                    # Register placeholder client subscription to trigger reqMktData
-                    self.market_data_service.register_websocket(symbol, None)
-                else:
-                    # Unregister placeholder client subscription to trigger cancelMktData
-                    self.market_data_service.unregister_websocket(symbol, None)
+                    self.market_data_service.request_streaming(symbol)
 
             except Exception as e:
                 logger.error(f"Error processing subscription message: {e}")

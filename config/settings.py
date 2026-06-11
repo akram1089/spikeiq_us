@@ -47,6 +47,16 @@ CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "trade_analytics_us")
 # Kafka Settings
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
+# Symbols streamed to Kafka/ClickHouse automatically — no UI or user action required
+DEFAULT_STREAM_SYMBOLS = [
+    s.strip().upper()
+    for s in os.getenv(
+        "DEFAULT_STREAM_SYMBOLS",
+        "AAPL,MSFT,NVDA,TSLA,SPX,META,GOOGL,AMZN",
+    ).split(",")
+    if s.strip()
+]
+
 # JWT Security Settings
 JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_spikeiq_token_key_123456")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")

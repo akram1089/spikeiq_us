@@ -87,6 +87,38 @@ class ClickHouseManager:
         """)
         logger.info("Instruments table verified.")
 
+        # Seed default production instruments on first deploy (drives autonomous streaming)
+        instrument_count = client.query(
+            f"SELECT count() FROM {self.database}.instruments"
+        ).result_rows[0][0]
+        if instrument_count == 0:
+            default_instruments = [
+                (3182352, "SPX", "CBOE", "IND", "USD", "S&P 500 Index"),
+                (18053702, "DJI", "CBOE", "IND", "USD", "Dow Jones Industrial Average"),
+                (265598, "AAPL", "SMART", "STK", "USD", "Apple Inc."),
+                (4815758, "NVDA", "SMART", "STK", "USD", "NVIDIA Corporation"),
+                (272093, "MSFT", "SMART", "STK", "USD", "Microsoft Corporation"),
+                (107113386, "META", "SMART", "STK", "USD", "Meta Platforms, Inc."),
+                (208781907, "GOOGL", "SMART", "STK", "USD", "Alphabet Inc."),
+                (76792991, "TSLA", "SMART", "STK", "USD", "Tesla, Inc."),
+                (3691937, "AMZN", "SMART", "STK", "USD", "Amazon.com, Inc."),
+                (8272386, "NFLX", "SMART", "STK", "USD", "Netflix, Inc."),
+                (479361661, "COIN", "SMART", "STK", "USD", "Coinbase Global, Inc."),
+                (651636257, "AVGO", "SMART", "STK", "USD", "Broadcom Inc."),
+                (443831637, "PLTR", "SMART", "STK", "USD", "Palantir Technologies Inc."),
+                (423610, "MSTR", "SMART", "STK", "USD", "MicroStrategy Incorporated"),
+                (442526569, "SNOW", "SMART", "STK", "USD", "Snowflake Inc."),
+                (369234857, "CRWD", "SMART", "STK", "USD", "CrowdStrike Holdings, Inc."),
+                (273036, "ORCL", "SMART", "STK", "USD", "Oracle Corporation"),
+                (166090175, "BABA", "SMART", "STK", "USD", "Alibaba Group Holding Limited"),
+            ]
+            client.insert(
+                "instruments",
+                default_instruments,
+                column_names=["con_id", "symbol", "exchange", "sec_type", "currency", "name"],
+            )
+            logger.success(f"Seeded {len(default_instruments)} default streaming instruments")
+
         # User Subscriptions table
         client.command("""
         CREATE TABLE IF NOT EXISTS user_subscriptions (
