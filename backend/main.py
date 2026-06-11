@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
     market_data_service = MarketDataService(conn.ib)
     if connected:
         await market_data_service.initialize_subscriptions()
+        await market_data_service.restore_persisted_subscriptions()
 
     async def _ib_market_data_watchdog():
         """IB Gateway often becomes ready after the backend starts; (re)subscribe on connect."""
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
             try:
                 if market_data_service and conn.ib.isConnected():
                     await market_data_service.ensure_subscriptions()
+                    await market_data_service.restore_persisted_subscriptions()
             except Exception as e:
                 logger.error(f"Failed to ensure market data subscriptions: {e}")
             while conn.ib.isConnected():

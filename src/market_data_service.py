@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Dict, Set
 from loguru import logger
 import math
+from config import settings
+from src.db.clickhouse_client import ch_manager
 
 class MarketDataService:
     """Streams live, event-driven market data using per-ticker updateEvent for zero-delay ticks."""
@@ -120,15 +122,29 @@ class MarketDataService:
                 if symbol in self.cache:
                     del self.cache[symbol]
 
+    async def restore_persisted_subscriptions(self):
+        """Re-activate IB subscriptions saved in ClickHouse after backend restarts."""
+        try:
+            client = ch_manager.get_client()
+            rows = client.query(f"""
+                SELECT DISTINCT symbol
+                FROM {settings.CLICKHOUSE_DB}.user_subscriptions FINAL
+                WHERE is_active = 1
+            """).result_rows
+            for (symbol,) in rows:
+                self.register_websocket(symbol.upper(), None)
+            if rows:
+                logger.success(f"Restored {len(rows)} persisted subscription(s) from ClickHouse")
+        except Exception as e:
+            logger.error(f"Failed to restore persisted subscriptions: {e}")
+
     def _on_ticker_update(self, symbol: str, ticker: Ticker):
         """Fires on every individual IB tick — no batching, zero delay."""
         logger.debug(f"Tick update received for {symbol}: last={ticker.last}, bid={ticker.bid}, ask={ticker.ask}, close={ticker.close}")
-        if symbol not in self.websockets or not self.websockets[symbol]:
+        if symbol not in self.contracts:
             return
 
         loop = self._loop
-        if not loop:
-            return
 
         def _safe_float(val):
             if val is None:
@@ -244,7 +260,11 @@ class MarketDataService:
             "timestamp": ts_str
         }
 
-        for ws in list(self.websockets[symbol]):
+        ws_clients = self.websockets.get(symbol, set())
+        if not loop or not ws_clients:
+            return
+
+        for ws in list(ws_clients):
             if ws is not None:  # Skip background placeholders (e.g. from subscription worker)
                 try:
                     asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
