@@ -448,11 +448,12 @@ export default function App() {
       });
       const data = await res.json();
       const items = data.items || [];
-      setSubscribedInstrumentIds(new Set(items.map((i) => i.instrument_id)));
+      const serverIds = new Set(items.map((i) => Number(i.instrument_id)));
+      setSubscribedInstrumentIds((prev) => (serverIds.size > 0 ? serverIds : prev));
       if (items.length > 0) {
         setSubscribedInstruments(
           items.map((i) => ({
-            instrument_id: i.instrument_id,
+            instrument_id: Number(i.instrument_id),
             symbol: i.symbol,
             conId: i.con_id,
             secType: 'STK',
@@ -2169,16 +2170,40 @@ export default function App() {
                 restUrl={restUrl}
                 token={token}
                 subscribedIds={subscribedInstrumentIds}
-                onSubscribe={(id) => {
+                onSubscribe={(row) => {
+                  const id = Number(row.instrument_id);
                   setSubscribedInstrumentIds((prev) => new Set([...prev, id]));
+                  setSubscribedInstruments((prev) => {
+                    if (prev.some((i) => Number(i.instrument_id) === id || i.symbol === row.symbol)) {
+                      return prev;
+                    }
+                    const secType =
+                      row.asset_type === 'INDEX' ? 'IND' :
+                      row.asset_type === 'FUTURE' ? 'FUT' :
+                      row.asset_type === 'ETF' ? 'ETF' : 'STK';
+                    return [
+                      ...prev,
+                      {
+                        instrument_id: id,
+                        symbol: row.symbol,
+                        name: row.name,
+                        conId: row.ibkr_conid,
+                        secType,
+                        exchange: row.exchange,
+                      },
+                    ];
+                  });
                 }}
                 onUnsubscribe={(id) => {
+                  const normalizedId = Number(id);
                   setSubscribedInstrumentIds((prev) => {
                     const next = new Set(prev);
-                    next.delete(id);
+                    next.delete(normalizedId);
                     return next;
                   });
-                  setSubscribedInstruments((prev) => prev.filter((i) => i.instrument_id !== id));
+                  setSubscribedInstruments((prev) =>
+                    prev.filter((i) => Number(i.instrument_id) !== normalizedId)
+                  );
                 }}
                 onSubscriptionsChange={fetchSubscriptions}
               />

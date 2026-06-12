@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ThemeProvider,
   createTheme,
@@ -32,6 +32,8 @@ const assetFilterToSecType = (filter) => {
   return 'STK';
 };
 
+const normalizeId = (id) => Number(id);
+
 const mapSearchHitToRow = (item) => ({
   id: item.instrument_id,
   instrument_id: item.instrument_id,
@@ -43,6 +45,7 @@ const mapSearchHitToRow = (item) => ({
   ibkr_conid: item.ibkr_conid,
   is_active: item.is_active ?? true,
   created_at: item.created_at,
+  isSubscribed: false,
 });
 
 export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSubscribe, onUnsubscribe, onSubscriptionsChange }) {
@@ -54,6 +57,35 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
   const [sortModel, setSortModel] = useState([{ field: 'symbol', sort: 'asc' }]);
   const [emptyHint, setEmptyHint] = useState('');
+  const [subscribedSet, setSubscribedSet] = useState(() => new Set());
+  const subscribedSetRef = useRef(subscribedSet);
+
+  useEffect(() => {
+    subscribedSetRef.current = subscribedSet;
+  }, [subscribedSet]);
+
+  useEffect(() => {
+    if (subscribedIds) {
+      setSubscribedSet(new Set([...subscribedIds].map(normalizeId)));
+    }
+  }, [subscribedIds]);
+
+  const withSubscriptionFlags = useCallback((items) => {
+    const subs = subscribedSetRef.current;
+    return items.map((item) => {
+      const row = mapSearchHitToRow(item);
+      return { ...row, isSubscribed: subs.has(normalizeId(row.instrument_id)) };
+    });
+  }, []);
+
+  useEffect(() => {
+    setRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        isSubscribed: subscribedSet.has(normalizeId(row.instrument_id)),
+      }))
+    );
+  }, [subscribedSet]);
 
   const fetchCatalog = useCallback(async () => {
     setLoading(true);
@@ -106,7 +138,7 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
       }
       setEmptyHint(hint);
 
-      setRows(items.map(mapSearchHitToRow));
+      setRows(withSubscriptionFlags(items));
       setRowCount(total);
     } catch (err) {
       console.error('Failed to load instrument catalog:', err);
@@ -114,14 +146,15 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
     } finally {
       setLoading(false);
     }
-  }, [restUrl, paginationModel, sortModel, searchQ, assetFilter]);
+  }, [restUrl, paginationModel, sortModel, searchQ, assetFilter, withSubscriptionFlags]);
 
   useEffect(() => {
     fetchCatalog();
   }, [fetchCatalog]);
 
-  const handleSubscribe = async (instrumentId) => {
+  const handleSubscribe = async (row) => {
     if (!token) return;
+    const instrumentId = normalizeId(row.instrument_id);
     try {
       const res = await fetch(`${restUrl}/subscriptions`, {
         method: 'POST',
@@ -135,22 +168,34 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
         const err = await res.json();
         throw new Error(err.detail || 'Subscription failed');
       }
-      onSubscribe?.(instrumentId);
-      onSubscriptionsChange?.();
+      setSubscribedSet((prev) => new Set([...prev, instrumentId]));
+      onSubscribe?.(row);
+      // ClickHouse is updated async via Kafka — delay refetch to avoid clearing optimistic UI
+      setTimeout(() => onSubscriptionsChange?.(), 3000);
     } catch (err) {
       alert(err.message);
     }
   };
 
-  const handleUnsubscribe = async (instrumentId) => {
+  const handleUnsubscribe = async (row) => {
     if (!token) return;
+    const instrumentId = normalizeId(row.instrument_id);
     try {
-      await fetch(`${restUrl}/subscriptions/${instrumentId}`, {
+      const res = await fetch(`${restUrl}/subscriptions/${instrumentId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Unsubscribe failed');
+      }
+      setSubscribedSet((prev) => {
+        const next = new Set(prev);
+        next.delete(instrumentId);
+        return next;
+      });
       onUnsubscribe?.(instrumentId);
-      onSubscriptionsChange?.();
+      setTimeout(() => onSubscriptionsChange?.(), 2000);
     } catch (err) {
       console.error(err);
     }
@@ -177,8 +222,7 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
         minWidth: 120,
         sortable: false,
         renderCell: (params) => {
-          const id = params.row.instrument_id;
-          if (subscribedIds?.has(id)) {
+          if (params.row.isSubscribed) {
             return <Chip label="Subscribed" size="small" color="success" variant="outlined" />;
           }
           if (params.row.ibkr_conid == null) {
@@ -202,14 +246,13 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
         minWidth: 120,
         sortable: false,
         renderCell: (params) => {
-          const id = params.row.instrument_id;
-          const subscribed = subscribedIds?.has(id);
+          const subscribed = params.row.isSubscribed;
           return (
             <Button
               size="small"
               variant={subscribed ? 'outlined' : 'contained'}
               color={subscribed ? 'error' : 'primary'}
-              onClick={() => (subscribed ? handleUnsubscribe(id) : handleSubscribe(id))}
+              onClick={() => (subscribed ? handleUnsubscribe(params.row) : handleSubscribe(params.row))}
               disabled={!token}
             >
               {subscribed ? 'Unsubscribe' : 'Subscribe'}
@@ -218,7 +261,7 @@ export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSu
         },
       },
     ],
-    [subscribedIds, token]
+    [token]
   );
 
   return (
