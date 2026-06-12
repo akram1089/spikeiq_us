@@ -2169,7 +2169,6 @@ export default function App() {
               <InstrumentsCatalog
                 restUrl={restUrl}
                 token={token}
-                subscribedIds={subscribedInstrumentIds}
                 onSubscribe={(row) => {
                   const id = Number(row.instrument_id);
                   setSubscribedInstrumentIds((prev) => new Set([...prev, id]));

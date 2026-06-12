@@ -7,12 +7,7 @@ from loguru import logger
 from config import settings
 from src.db.clickhouse_client import ch_manager
 
-ASSET_TYPE_TO_SEC_TYPE = {
-    "STOCK": "STK",
-    "ETF": "STK",
-    "INDEX": "IND",
-    "FUTURE": "FUT",
-}
+from src.db.clickhouse_client import ASSET_TYPE_TO_SEC_TYPE
 
 
 class SecurityMasterSyncWorker(threading.Thread):

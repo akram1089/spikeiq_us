@@ -6,8 +6,8 @@ from ib_insync import IB
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from config import settings
 from src.auth.router import get_current_user
+from src.db.clickhouse_client import ch_manager
 from src.db.postgres import get_db
 from src.queue.kafka_producer import kafka_producer
 from src.security_master.repository import InstrumentRepository
@@ -16,11 +16,17 @@ from src.security_master.service import InstrumentService
 router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
 
 _ib_instance: IB | None = None
+_market_data_service = None
 
 
 def set_ib_instance(ib: IB | None) -> None:
     global _ib_instance
     _ib_instance = ib
+
+
+def set_market_data_service(service) -> None:
+    global _market_data_service
+    _market_data_service = service
 
 
 class SubscriptionRequest(BaseModel):
@@ -42,13 +48,19 @@ async def subscribe(
     if inst.ibkr_conid is None:
         service = InstrumentService(db, _ib_instance)
         try:
-            resolved = await service.resolve_conid_if_missing(payload.instrument_id)
+            await service.resolve_conid_if_missing(payload.instrument_id)
             inst = repo.get_by_id(payload.instrument_id)
         except HTTPException as e:
             raise e
 
     if inst.ibkr_conid is None:
         raise HTTPException(status_code=422, detail="Instrument has no IBKR contract ID")
+
+    # Streaming source of truth: ClickHouse instruments catalog
+    ch_manager.upsert_catalog_from_instrument(inst)
+
+    if _market_data_service:
+        _market_data_service.request_streaming(inst.id)
 
     event = {
         "user_id": username,
@@ -84,6 +96,9 @@ async def unsubscribe(
     if not inst:
         raise HTTPException(status_code=404, detail="Instrument not found")
 
+    if inst.ibkr_conid:
+        ch_manager.deactivate_catalog_instrument(int(inst.ibkr_conid))
+
     event = {
         "user_id": username,
         "instrument_id": instrument_id,
@@ -106,7 +121,7 @@ async def list_subscriptions(
     db: Session = Depends(get_db),
 ):
     """Return active subscriptions for the current user from ClickHouse."""
-    from src.db.clickhouse_client import ch_manager
+    from config import settings
 
     username = user["sub"]
     try:

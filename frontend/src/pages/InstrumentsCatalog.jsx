@@ -1,338 +1,334 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ThemeProvider,
-  createTheme,
-  CssBaseline,
-  Box,
-  Chip,
-  Button,
-  TextField,
-  Typography,
-  Stack,
-} from '@mui/material';
-import { DataGrid } from '@mui/x-data-grid';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Building2, RefreshCw, Search, Trash2 } from 'lucide-react';
 
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: { main: '#3b82f6' },
-    background: { default: '#0a0e17', paper: '#111827' },
-  },
-  typography: {
-    fontFamily: '"Inter", system-ui, sans-serif',
-  },
-});
+const SEC_TYPE_LABEL = { STK: 'STK', IND: 'IND', FUT: 'FUT' };
+const SEARCH_TYPES = [
+  { value: 'STK', label: 'Stock' },
+  { value: 'IND', label: 'Index' },
+  { value: 'FUT', label: 'Future' },
+  { value: 'ETF', label: 'ETF' },
+];
 
-const ASSET_FILTERS = ['ALL', 'STOCK', 'ETF', 'INDEX', 'FUTURE'];
+const FILTER_TABS = [
+  { id: 'ALL', label: 'All' },
+  { id: 'STOCK', label: 'Stock' },
+  { id: 'ETF', label: 'ETF' },
+  { id: 'INDEX', label: 'Index' },
+  { id: 'FUTURE', label: 'Future' },
+];
 
-const assetFilterToSecType = (filter) => {
-  if (filter === 'ETF') return 'ETF';
-  if (filter === 'INDEX') return 'IND';
-  if (filter === 'FUTURE') return 'FUT';
-  return 'STK';
+const cardStyle = {
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border-color)',
+  borderRadius: '12px',
+  padding: '20px 24px',
 };
 
-const normalizeId = (id) => Number(id);
+export default function InstrumentsCatalog({
+  restUrl,
+  token,
+  onSubscribe,
+  onUnsubscribe,
+  onSubscriptionsChange,
+}) {
+  const [searchSymbol, setSearchSymbol] = useState('');
+  const [searchSecType, setSearchSecType] = useState('STK');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [searchSuccess, setSearchSuccess] = useState(null);
 
-const mapSearchHitToRow = (item) => ({
-  id: item.instrument_id,
-  instrument_id: item.instrument_id,
-  symbol: item.symbol,
-  name: item.name,
-  asset_type: item.asset_type,
-  exchange: item.exchange || '—',
-  currency: item.currency || 'USD',
-  ibkr_conid: item.ibkr_conid,
-  is_active: item.is_active ?? true,
-  created_at: item.created_at,
-  isSubscribed: false,
-});
+  const [activeInstruments, setActiveInstruments] = useState([]);
+  const [loadingActive, setLoadingActive] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('ALL');
 
-export default function InstrumentsCatalog({ restUrl, token, subscribedIds, onSubscribe, onUnsubscribe, onSubscriptionsChange }) {
-  const [rows, setRows] = useState([]);
-  const [rowCount, setRowCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [searchQ, setSearchQ] = useState('');
-  const [assetFilter, setAssetFilter] = useState('ALL');
-  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 25 });
-  const [sortModel, setSortModel] = useState([{ field: 'symbol', sort: 'asc' }]);
-  const [emptyHint, setEmptyHint] = useState('');
-  const [subscribedSet, setSubscribedSet] = useState(() => new Set());
-  const subscribedSetRef = useRef(subscribedSet);
-
-  useEffect(() => {
-    subscribedSetRef.current = subscribedSet;
-  }, [subscribedSet]);
-
-  useEffect(() => {
-    if (subscribedIds) {
-      setSubscribedSet(new Set([...subscribedIds].map(normalizeId)));
-    }
-  }, [subscribedIds]);
-
-  const withSubscriptionFlags = useCallback((items) => {
-    const subs = subscribedSetRef.current;
-    return items.map((item) => {
-      const row = mapSearchHitToRow(item);
-      return { ...row, isSubscribed: subs.has(normalizeId(row.instrument_id)) };
-    });
-  }, []);
-
-  useEffect(() => {
-    setRows((prev) =>
-      prev.map((row) => ({
-        ...row,
-        isSubscribed: subscribedSet.has(normalizeId(row.instrument_id)),
-      }))
-    );
-  }, [subscribedSet]);
-
-  const fetchCatalog = useCallback(async () => {
-    setLoading(true);
-    setEmptyHint('');
+  const fetchActiveInstruments = useCallback(async () => {
+    setLoadingActive(true);
     try {
-      const sort = sortModel[0] || { field: 'symbol', sort: 'asc' };
-      const params = new URLSearchParams({
-        page: String(paginationModel.page + 1),
-        page_size: String(paginationModel.pageSize),
-        sort_by: sort.field === 'instrument_id' ? 'id' : sort.field,
-        sort_order: sort.sort || 'asc',
-      });
-      const query = searchQ.trim();
-      if (query) params.set('q', query);
-      if (assetFilter !== 'ALL') params.set('asset_type', assetFilter);
-
-      const res = await fetch(`${restUrl}/instruments?${params}`);
+      const res = await fetch(`${restUrl}/instruments/streaming`);
       const data = await res.json();
-      let items = data.items || [];
-      let total = data.total || 0;
-      let hint = '';
-
-      // Catalog miss: try exact symbol lookup via IBKR (e.g. SPCX / SpaceX)
-      if (total === 0 && query && /^[A-Za-z0-9./]{1,20}$/.test(query)) {
-        const symbol = query.toUpperCase().replace(/^\//, '');
-        const secType = assetFilterToSecType(assetFilter);
-        const searchRes = await fetch(
-          `${restUrl}/instruments/search?symbol=${encodeURIComponent(symbol)}&sec_type=${secType}`
-        );
-        if (searchRes.ok) {
-          const hit = await searchRes.json();
-          if (!assetFilter || assetFilter === 'ALL' || hit.asset_type === assetFilter) {
-            items = [hit];
-            total = 1;
-            hint = `Resolved via IBKR (${hit.source || 'ibkr'}).`;
-          } else {
-            hint = `${symbol} is a ${hit.asset_type}, not ${assetFilter}. Switch the asset filter to find it.`;
-          }
-        }
-      }
-
-      if (total === 0 && !hint) {
-        if (assetFilter === 'FUTURE' && /space/i.test(query)) {
-          hint = 'SpaceX trades as SPCX (STOCK on Nasdaq), not as a futures contract. Try filter: STOCK or All Types.';
-        } else if (data.total === 0 && !query && assetFilter === 'ALL') {
-          hint = 'Catalog is empty. Run sync_indexes, sync_stocks, and sync_futures on the server.';
-        } else {
-          hint = 'No instruments matched. Try All Types or search SPCX for SpaceX.';
-        }
-      }
-      setEmptyHint(hint);
-
-      setRows(withSubscriptionFlags(items));
-      setRowCount(total);
+      setActiveInstruments(data.items || []);
     } catch (err) {
-      console.error('Failed to load instrument catalog:', err);
-      setEmptyHint('Failed to load catalog. Check API and PostgreSQL sync jobs.');
+      console.error('Failed to load streaming instruments:', err);
     } finally {
-      setLoading(false);
+      setLoadingActive(false);
     }
-  }, [restUrl, paginationModel, sortModel, searchQ, assetFilter, withSubscriptionFlags]);
+  }, [restUrl]);
 
   useEffect(() => {
-    fetchCatalog();
-  }, [fetchCatalog]);
+    fetchActiveInstruments();
+  }, [fetchActiveInstruments]);
 
-  const handleSubscribe = async (row) => {
-    if (!token) return;
-    const instrumentId = normalizeId(row.instrument_id);
+  const filteredActive = useMemo(() => {
+    if (typeFilter === 'ALL') return activeInstruments;
+    return activeInstruments.filter((i) => i.asset_type === typeFilter);
+  }, [activeInstruments, typeFilter]);
+
+  const tabCounts = useMemo(() => {
+    const counts = { ALL: activeInstruments.length };
+    for (const tab of FILTER_TABS) {
+      if (tab.id === 'ALL') continue;
+      counts[tab.id] = activeInstruments.filter((i) => i.asset_type === tab.id).length;
+    }
+    return counts;
+  }, [activeInstruments]);
+
+  const handleSearchAndAdd = async (e) => {
+    e?.preventDefault();
+    if (!searchSymbol.trim()) return;
+    if (!token) {
+      setSearchError('Please log in to add instruments.');
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchSuccess(null);
+    const querySymbol = searchSymbol.trim().toUpperCase();
+
     try {
-      const res = await fetch(`${restUrl}/subscriptions`, {
+      const searchRes = await fetch(
+        `${restUrl}/instruments/search?symbol=${encodeURIComponent(querySymbol)}&sec_type=${searchSecType}`
+      );
+      if (!searchRes.ok) {
+        const err = await searchRes.json();
+        throw new Error(err.detail || `Symbol ${querySymbol} not found`);
+      }
+      const hit = await searchRes.json();
+
+      const exists = activeInstruments.some((i) => i.symbol === hit.symbol);
+      if (exists) {
+        setSearchError(`${hit.symbol} is already in the active stream list.`);
+        return;
+      }
+
+      const subRes = await fetch(`${restUrl}/subscriptions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ instrument_id: instrumentId }),
+        body: JSON.stringify({ instrument_id: hit.instrument_id }),
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Subscription failed');
+      if (!subRes.ok) {
+        const err = await subRes.json();
+        throw new Error(err.detail || 'Failed to add instrument to stream catalog');
       }
-      setSubscribedSet((prev) => new Set([...prev, instrumentId]));
-      onSubscribe?.(row);
-      // ClickHouse is updated async via Kafka — delay refetch to avoid clearing optimistic UI
-      setTimeout(() => onSubscriptionsChange?.(), 3000);
+
+      onSubscribe?.(hit);
+      onSubscriptionsChange?.();
+      setSearchSuccess(`Added ${hit.symbol} to streaming catalog.`);
+      setSearchSymbol('');
+      await fetchActiveInstruments();
     } catch (err) {
-      alert(err.message);
+      setSearchError(err.message || 'Search failed');
+    } finally {
+      setSearchLoading(false);
     }
   };
 
-  const handleUnsubscribe = async (row) => {
+  const handleRemove = async (row) => {
     if (!token) return;
-    const instrumentId = normalizeId(row.instrument_id);
+    if (!row.instrument_id) {
+      alert('Cannot remove: instrument not linked in Security Master.');
+      return;
+    }
     try {
-      const res = await fetch(`${restUrl}/subscriptions/${instrumentId}`, {
+      const res = await fetch(`${restUrl}/subscriptions/${row.instrument_id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Unsubscribe failed');
+        throw new Error(err.detail || 'Remove failed');
       }
-      setSubscribedSet((prev) => {
-        const next = new Set(prev);
-        next.delete(instrumentId);
-        return next;
-      });
-      onUnsubscribe?.(instrumentId);
-      setTimeout(() => onSubscriptionsChange?.(), 2000);
+      onUnsubscribe?.(row.instrument_id);
+      onSubscriptionsChange?.();
+      await fetchActiveInstruments();
     } catch (err) {
-      console.error(err);
+      alert(err.message);
     }
   };
 
-  const columns = useMemo(
-    () => [
-      { field: 'symbol', headerName: 'Symbol', flex: 0.8, minWidth: 90 },
-      { field: 'name', headerName: 'Name', flex: 1.5, minWidth: 180 },
-      { field: 'asset_type', headerName: 'Asset Type', flex: 0.7, minWidth: 100 },
-      { field: 'exchange', headerName: 'Exchange', flex: 0.7, minWidth: 90 },
-      { field: 'currency', headerName: 'Currency', flex: 0.5, minWidth: 80 },
-      {
-        field: 'ibkr_conid',
-        headerName: 'IBKR ConId',
-        flex: 0.8,
-        minWidth: 110,
-        valueFormatter: (value) => (value != null ? value : '—'),
-      },
-      {
-        field: 'status',
-        headerName: 'Status',
-        flex: 0.9,
-        minWidth: 120,
-        sortable: false,
-        renderCell: (params) => {
-          if (params.row.isSubscribed) {
-            return <Chip label="Subscribed" size="small" color="success" variant="outlined" />;
-          }
-          if (params.row.ibkr_conid == null) {
-            return <Chip label="Unresolved" size="small" color="warning" variant="outlined" />;
-          }
-          return <Chip label="Available" size="small" variant="outlined" />;
-        },
-      },
-      {
-        field: 'created_at',
-        headerName: 'Created',
-        flex: 1,
-        minWidth: 160,
-        valueFormatter: (value) =>
-          value ? new Date(value).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—',
-      },
-      {
-        field: 'actions',
-        headerName: 'Actions',
-        flex: 0.8,
-        minWidth: 120,
-        sortable: false,
-        renderCell: (params) => {
-          const subscribed = params.row.isSubscribed;
-          return (
-            <Button
-              size="small"
-              variant={subscribed ? 'outlined' : 'contained'}
-              color={subscribed ? 'error' : 'primary'}
-              onClick={() => (subscribed ? handleUnsubscribe(params.row) : handleSubscribe(params.row))}
-              disabled={!token}
-            >
-              {subscribed ? 'Unsubscribe' : 'Subscribe'}
-            </Button>
-          );
-        },
-      },
-    ],
-    [token]
-  );
-
   return (
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline />
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
-          <Box>
-            <Typography variant="h5" fontWeight={800} sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Security Master Catalog
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Searchable instrument catalog — {rowCount.toLocaleString()} total records
-            </Typography>
-          </Box>
-        </Stack>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', flex: 1 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Building2 size={28} style={{ color: 'var(--blue)' }} />
+          <div>
+            <h2 style={{
+              fontSize: '22px', fontWeight: 800, margin: 0,
+              fontFamily: 'var(--font-heading)', textTransform: 'uppercase', letterSpacing: '0.5px',
+            }}>
+              Instruments
+            </h2>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+              Manage streamed instruments across NYSE, NASDAQ, CBOE &amp; CME
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="btn-tab"
+          onClick={fetchActiveInstruments}
+          disabled={loadingActive}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '8px 16px', borderRadius: '8px',
+          }}
+        >
+          <RefreshCw size={14} style={{ animation: loadingActive ? 'spin 1s linear infinite' : 'none' }} />
+          Refresh
+        </button>
+      </div>
 
-        <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
-          <TextField
-            size="small"
-            placeholder="Search symbol or name..."
-            value={searchQ}
-            onChange={(e) => {
-              setSearchQ(e.target.value);
-              setPaginationModel((m) => ({ ...m, page: 0 }));
+      {/* Search & Add */}
+      <div style={cardStyle}>
+        <h3 style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', margin: '0 0 16px' }}>
+          Search &amp; Add Instruments
+        </h3>
+        <form onSubmit={handleSearchAndAdd} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="text"
+            value={searchSymbol}
+            onChange={(e) => setSearchSymbol(e.target.value)}
+            placeholder="Search for AAPL, SPX, NVDA, ESU26..."
+            style={{
+              flex: '1 1 280px', minWidth: '200px',
+              background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+              borderRadius: '8px', padding: '10px 14px', color: 'var(--text-primary)',
+              fontSize: '13px', outline: 'none',
             }}
-            sx={{ minWidth: 260 }}
           />
-          {ASSET_FILTERS.map((f) => (
-            <Chip
-              key={f}
-              label={f === 'ALL' ? 'All Types' : f}
-              onClick={() => {
-                setAssetFilter(f);
-                setPaginationModel((m) => ({ ...m, page: 0 }));
-              }}
-              color={assetFilter === f ? 'primary' : 'default'}
-              variant={assetFilter === f ? 'filled' : 'outlined'}
-              size="small"
-            />
-          ))}
-        </Stack>
-
-        {emptyHint && (
-          <Typography variant="body2" color="warning.main" sx={{ px: 0.5 }}>
-            {emptyHint}
-          </Typography>
+          <select
+            value={searchSecType}
+            onChange={(e) => setSearchSecType(e.target.value)}
+            style={{
+              background: 'var(--bg-input)', border: '1px solid var(--border-color)',
+              borderRadius: '8px', padding: '10px 14px', color: 'var(--text-primary)',
+              fontSize: '13px', cursor: 'pointer',
+            }}
+          >
+            {SEARCH_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            disabled={searchLoading || !searchSymbol.trim()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              background: 'var(--blue)', color: '#fff', border: 'none',
+              borderRadius: '8px', padding: '10px 20px', fontWeight: 700,
+              fontSize: '13px', cursor: searchLoading ? 'wait' : 'pointer',
+              opacity: searchLoading ? 0.7 : 1,
+            }}
+          >
+            <Search size={16} />
+            {searchLoading ? 'Searching...' : 'Search'}
+          </button>
+        </form>
+        {searchError && (
+          <p style={{ color: 'var(--red)', fontSize: '12px', margin: '12px 0 0' }}>{searchError}</p>
         )}
+        {searchSuccess && (
+          <p style={{ color: 'var(--green)', fontSize: '12px', margin: '12px 0 0' }}>{searchSuccess}</p>
+        )}
+      </div>
 
-        <Box sx={{ height: 600, width: '100%' }}>
-          <DataGrid
-            rows={rows}
-            columns={columns}
-            rowCount={rowCount}
-            loading={loading}
-            pageSizeOptions={[10, 25, 50, 100]}
-            paginationModel={paginationModel}
-            paginationMode="server"
-            onPaginationModelChange={setPaginationModel}
-            sortingMode="server"
-            sortModel={sortModel}
-            onSortModelChange={setSortModel}
-            disableRowSelectionOnClick
-            sx={{
-              border: '1px solid rgba(255,255,255,0.08)',
-              '& .MuiDataGrid-columnHeaders': { backgroundColor: '#1f2937' },
-              '& .MuiDataGrid-cell': { borderColor: 'rgba(255,255,255,0.05)' },
-            }}
-          />
-        </Box>
-      </Box>
-    </ThemeProvider>
+      {/* Active Instruments */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', margin: 0 }}>
+            Active Instruments ({activeInstruments.length})
+          </h3>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {FILTER_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`btn-tab ${typeFilter === tab.id ? 'active' : ''}`}
+                onClick={() => setTypeFilter(tab.id)}
+                style={{ padding: '5px 12px', fontSize: '11px', borderRadius: '20px' }}
+              >
+                {tab.label} ({tabCounts[tab.id] ?? 0})
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800 }}>Symbol</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800 }}>Name</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800 }}>Exchange</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800 }}>Type</th>
+                <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800 }}>Token</th>
+                <th style={{ textAlign: 'right', padding: '10px 12px', fontWeight: 800 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loadingActive ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    Loading streaming instruments...
+                  </td>
+                </tr>
+              ) : filteredActive.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    No active instruments. Search above to add symbols to the stream catalog.
+                  </td>
+                </tr>
+              ) : (
+                filteredActive.map((row) => (
+                  <tr
+                    key={`${row.con_id}-${row.symbol}`}
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                  >
+                    <td style={{ padding: '12px', fontWeight: 800, color: 'var(--text-primary)' }}>{row.symbol}</td>
+                    <td style={{ padding: '12px', color: 'var(--text-secondary)', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.name}
+                    </td>
+                    <td style={{ padding: '12px' }}>
+                      <span style={{
+                        background: 'rgba(45, 212, 191, 0.12)', color: 'var(--teal, #2dd4bf)',
+                        padding: '3px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+                      }}>
+                        {row.exchange || 'SMART'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px', color: 'var(--text-secondary)' }}>
+                      {SEC_TYPE_LABEL[row.sec_type] || row.asset_type || 'STK'}
+                    </td>
+                    <td style={{ padding: '12px', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                      {row.con_id}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(row)}
+                        disabled={!token}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          background: 'rgba(239, 68, 68, 0.12)', color: 'var(--red, #ef4444)',
+                          border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '6px',
+                          padding: '6px 12px', fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+                        }}
+                      >
+                        <Trash2 size={13} />
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -67,10 +67,24 @@ class SubscriptionWorker(threading.Thread):
                 )
                 logger.success(f"ClickHouse subscription updated for {user_id} -> {symbol} ({action})")
 
-                if action == "SUBSCRIBE" and instrument_id:
-                    self.market_data_service.request_streaming(instrument_id)
-                elif action == "SUBSCRIBE" and symbol:
-                    self.market_data_service.request_streaming_by_symbol(symbol)
+                if action == "SUBSCRIBE" and con_id:
+                    from src.db.postgres import SessionLocal
+                    from src.security_master.repository import InstrumentRepository
+
+                    if instrument_id:
+                        db = SessionLocal()
+                        try:
+                            inst = InstrumentRepository(db).get_by_id(instrument_id)
+                            if inst:
+                                ch_manager.upsert_catalog_from_instrument(inst)
+                        finally:
+                            db.close()
+                    if instrument_id:
+                        self.market_data_service.request_streaming(instrument_id)
+                    elif symbol:
+                        self.market_data_service.request_streaming_by_symbol(symbol)
+                elif action == "UNSUBSCRIBE" and con_id:
+                    ch_manager.deactivate_catalog_instrument(con_id)
 
             except Exception as e:
                 logger.error(f"Error processing subscription message: {e}")

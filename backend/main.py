@@ -33,7 +33,11 @@ from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
 from src.auth.router import router as auth_router
 from src.market.router import router as market_router
 from src.security_master.router import router as instruments_router, set_ib_instance as set_instruments_ib
-from src.subscriptions.router import router as subscriptions_router, set_ib_instance as set_subscriptions_ib
+from src.subscriptions.router import (
+    router as subscriptions_router,
+    set_ib_instance as set_subscriptions_ib,
+    set_market_data_service as set_subscriptions_market_data,
+)
 from src.db.postgres import check_postgres_health, init_db
 from config import settings
 
@@ -90,9 +94,10 @@ async def lifespan(app: FastAPI):
     hist_service = HistoricalDataService(conn.ib)
     set_instruments_ib(conn.ib if conn else None)
     set_subscriptions_ib(conn.ib if conn else None)
-    
+
     # Start autonomous market data pipeline (no UI required)
     market_data_service = MarketDataService(conn.ib)
+    set_subscriptions_market_data(market_data_service)
 
     async def _start_autonomous_streaming():
         try:

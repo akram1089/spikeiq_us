@@ -3,6 +3,20 @@ import clickhouse_connect
 from loguru import logger
 from config import settings
 
+ASSET_TYPE_TO_SEC_TYPE = {
+    "STOCK": "STK",
+    "ETF": "STK",
+    "INDEX": "IND",
+    "FUTURE": "FUT",
+}
+
+SEC_TYPE_TO_ASSET_TYPE = {
+    "STK": "STOCK",
+    "IND": "INDEX",
+    "FUT": "FUTURE",
+}
+
+
 class ClickHouseManager:
     """Manages ClickHouse connections, database creation, and schema migration/initialization."""
     
@@ -196,7 +210,7 @@ class ClickHouseManager:
         client = self.get_client()
         rows = client.query(
             f"""
-            SELECT con_id, symbol, exchange, sec_type
+            SELECT con_id, symbol, exchange, sec_type, currency, name, added_at
             FROM {self.database}.instruments FINAL
             WHERE is_active = 1 AND con_id > 0
             ORDER BY symbol
@@ -208,9 +222,84 @@ class ClickHouseManager:
                 "symbol": str(row[1]).upper(),
                 "exchange": str(row[2] or "SMART"),
                 "sec_type": str(row[3] or "STK"),
+                "currency": str(row[4] or "USD"),
+                "name": str(row[5] or row[1]),
+                "added_at": row[6],
             }
             for row in rows
         ]
+
+    def upsert_catalog_instrument(
+        self,
+        *,
+        con_id: int,
+        symbol: str,
+        exchange: str,
+        sec_type: str,
+        currency: str,
+        name: str,
+        is_active: bool = True,
+    ) -> None:
+        """Insert or update a row in the streaming instruments catalog."""
+        client = self.get_client()
+        client.insert(
+            "instruments",
+            [[
+                int(con_id),
+                symbol.upper(),
+                exchange or "SMART",
+                sec_type or "STK",
+                currency or "USD",
+                name or symbol.upper(),
+                1 if is_active else 0,
+            ]],
+            column_names=["con_id", "symbol", "exchange", "sec_type", "currency", "name", "is_active"],
+        )
+        logger.info(
+            f"ClickHouse instruments catalog updated: {symbol.upper()} "
+            f"(con_id={con_id}, is_active={is_active})"
+        )
+
+    def upsert_catalog_from_instrument(self, inst) -> None:
+        """Upsert from a PostgreSQL Security Master Instrument ORM row."""
+        if not inst or not inst.ibkr_conid:
+            return
+        sec_type = ASSET_TYPE_TO_SEC_TYPE.get(
+            (inst.asset_type or "STOCK").upper(), "STK"
+        )
+        self.upsert_catalog_instrument(
+            con_id=int(inst.ibkr_conid),
+            symbol=inst.symbol,
+            exchange=inst.exchange or "SMART",
+            sec_type=sec_type,
+            currency=inst.currency or "USD",
+            name=inst.name or inst.symbol,
+            is_active=bool(inst.is_active),
+        )
+
+    def deactivate_catalog_instrument(self, con_id: int) -> None:
+        """Mark an instrument inactive in the streaming catalog."""
+        client = self.get_client()
+        rows = client.query(
+            f"""
+            SELECT symbol, exchange, sec_type, currency, name
+            FROM {self.database}.instruments FINAL
+            WHERE con_id = {{cid:UInt32}}
+            LIMIT 1
+            """,
+            parameters={"cid": int(con_id)},
+        ).result_rows
+        if rows:
+            symbol, exchange, sec_type, currency, name = rows[0]
+            self.upsert_catalog_instrument(
+                con_id=int(con_id),
+                symbol=str(symbol),
+                exchange=str(exchange or "SMART"),
+                sec_type=str(sec_type or "STK"),
+                currency=str(currency or "USD"),
+                name=str(name or symbol),
+                is_active=False,
+            )
 
 # Global instance
 ch_manager = ClickHouseManager()

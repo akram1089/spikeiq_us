@@ -13,6 +13,7 @@ from src.security_master.schemas import (
     InstrumentSearchResponse,
     InstrumentUpdate,
 )
+from src.security_master.repository import InstrumentRepository
 from src.security_master.service import InstrumentService
 
 router = APIRouter(prefix="/api/instruments", tags=["instruments"])
@@ -35,6 +36,38 @@ def get_service(
     ib: Annotated[IB | None, Depends(get_ib)],
 ) -> InstrumentService:
     return InstrumentService(db, ib)
+
+
+@router.get("/streaming")
+def list_streaming_instruments(
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Active instruments in the ClickHouse streaming catalog (is_active = 1)."""
+    from src.db.clickhouse_client import SEC_TYPE_TO_ASSET_TYPE, ch_manager
+
+    repo = InstrumentRepository(db)
+    items = []
+    for row in ch_manager.list_active_instruments():
+        inst = repo.get_by_ibkr_conid(row["con_id"]) or repo.get_by_symbol(row["symbol"])
+        asset_type = (
+            inst.asset_type
+            if inst
+            else SEC_TYPE_TO_ASSET_TYPE.get(row["sec_type"], "STOCK")
+        )
+        items.append(
+            {
+                "instrument_id": inst.id if inst else 0,
+                "con_id": row["con_id"],
+                "symbol": row["symbol"],
+                "name": inst.name if inst else row["name"],
+                "exchange": row["exchange"],
+                "sec_type": row["sec_type"],
+                "asset_type": asset_type,
+                "currency": row.get("currency", "USD"),
+                "added_at": row.get("added_at"),
+            }
+        )
+    return {"items": items, "total": len(items)}
 
 
 @router.get("", response_model=InstrumentListResponse)
