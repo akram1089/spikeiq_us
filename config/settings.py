@@ -52,7 +52,7 @@ DEFAULT_STREAM_SYMBOLS = [
     s.strip().upper()
     for s in os.getenv(
         "DEFAULT_STREAM_SYMBOLS",
-        "AAPL,MSFT,NVDA,TSLA,SPX,META,GOOGL,AMZN",
+        "AAPL,MSFT,NVDA,TSLA,SPX,NDX,COMP,SPCX,META,GOOGL,AMZN",
     ).split(",")
     if s.strip()
 ]
@@ -61,4 +61,21 @@ DEFAULT_STREAM_SYMBOLS = [
 JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_spikeiq_token_key_123456")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", 24))
+
+# PostgreSQL Security Master
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", 5432))
+POSTGRES_USER = os.getenv("POSTGRES_USER", "trade_analytics")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "trade_analytics_pass")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "security_master")
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}",
+)
+
+# IBKR contract resolution
+IB_RESOLVE_BATCH_SIZE = int(os.getenv("IB_RESOLVE_BATCH_SIZE", "50"))
+IB_RESOLVE_RETRY_DELAY = float(os.getenv("IB_RESOLVE_RETRY_DELAY", "2.0"))
+IB_RESOLVE_MAX_RETRIES = int(os.getenv("IB_RESOLVE_MAX_RETRIES", "3"))
 

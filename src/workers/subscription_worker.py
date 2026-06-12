@@ -6,8 +6,8 @@ from config import settings
 from src.db.clickhouse_client import ch_manager
 
 class SubscriptionWorker(threading.Thread):
-    """Background consumer worker running on a separate thread to handle user-subscriptions events."""
-    
+    """Background consumer worker for user-subscription events."""
+
     def __init__(self, market_data_service):
         super().__init__(daemon=True, name="SubscriptionWorker")
         self.market_data_service = market_data_service
@@ -19,14 +19,14 @@ class SubscriptionWorker(threading.Thread):
     def run(self):
         logger.info("Starting Subscription Consumer worker thread...")
         self.running = True
-        
+
         conf = {
             'bootstrap.servers': self.bootstrap_servers,
             'group.id': self.group_id,
             'auto.offset.reset': 'earliest',
             'enable.auto.commit': True
         }
-        
+
         try:
             self.consumer = Consumer(conf)
             self.consumer.subscribe(['user-subscriptions'])
@@ -48,32 +48,33 @@ class SubscriptionWorker(threading.Thread):
                         logger.error(f"Kafka consumer error: {msg.error()}")
                     continue
 
-                # Process message
                 payload = json.loads(msg.value().decode('utf-8'))
                 user_id = payload.get("user_id")
-                con_id = int(payload.get("con_id"))
-                symbol = payload.get("symbol").upper()
+                con_id = int(payload.get("con_id", 0))
+                instrument_id = int(payload.get("instrument_id", 0))
+                symbol = payload.get("symbol", "").upper()
                 action = payload.get("action")
                 is_active = 1 if action == "SUBSCRIBE" else 0
 
-                logger.info(f"Processing subscription event: user={user_id}, symbol={symbol}, action={action}")
+                logger.info(
+                    f"Processing subscription: user={user_id}, instrument_id={instrument_id}, action={action}"
+                )
 
-                # 1. Update ClickHouse User Subscriptions (ReplacingMergeTree handles upsert on merge)
                 db_client.insert(
                     "user_subscriptions",
-                    [[user_id, con_id, symbol, is_active]],
-                    column_names=["user_id", "con_id", "symbol", "is_active"]
+                    [[user_id, instrument_id, con_id, symbol, is_active]],
+                    column_names=["user_id", "instrument_id", "con_id", "symbol", "is_active"],
                 )
                 logger.success(f"ClickHouse subscription updated for {user_id} -> {symbol} ({action})")
 
-                # 2. Ensure IB streaming for new symbols (unsubscribe is UI-only; pipeline keeps running)
-                if action == "SUBSCRIBE":
-                    self.market_data_service.request_streaming(symbol)
+                if action == "SUBSCRIBE" and instrument_id:
+                    self.market_data_service.request_streaming(instrument_id)
+                elif action == "SUBSCRIBE" and symbol:
+                    self.market_data_service.request_streaming_by_symbol(symbol)
 
             except Exception as e:
                 logger.error(f"Error processing subscription message: {e}")
 
-        # Cleanup
         try:
             self.consumer.close()
         except Exception:

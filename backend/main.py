@@ -29,8 +29,12 @@ from src.db.clickhouse_client import ch_manager
 from src.queue.kafka_producer import kafka_producer
 from src.workers.subscription_worker import SubscriptionWorker
 from src.workers.tick_ingestion_worker import TickIngestionWorker
+from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
 from src.auth.router import router as auth_router
 from src.market.router import router as market_router
+from src.security_master.router import router as instruments_router, set_ib_instance as set_instruments_ib
+from src.subscriptions.router import router as subscriptions_router, set_ib_instance as set_subscriptions_ib
+from src.db.postgres import check_postgres_health, init_db
 from config import settings
 
 # Patch asyncio to work with existing uvicorn event loops
@@ -43,19 +47,27 @@ hist_service: HistoricalDataService = None
 market_data_service: MarketDataService = None
 sub_worker: SubscriptionWorker = None
 tick_worker: TickIngestionWorker = None
+sm_sync_worker: SecurityMasterSyncWorker = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages the startup and shutdown lifecycles of the connection to IB Gateway, ClickHouse, and Kafka."""
-    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker
+    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker
     
-    # 1. Initialize ClickHouse Schema
+    # 1. Initialize PostgreSQL Security Master
+    try:
+        init_db()
+        logger.success("PostgreSQL Security Master initialized.")
+    except Exception as e:
+        logger.critical(f"PostgreSQL initialization failed: {e}")
+
+    # 2. Initialize ClickHouse Schema
     try:
         ch_manager.initialize_schema()
     except Exception as e:
         logger.critical(f"ClickHouse initialization failed: {e}")
         
-    # 2. Initialize Kafka Producer
+    # 3. Initialize Kafka Producer
     try:
         kafka_producer.initialize()
     except Exception as e:
@@ -76,6 +88,8 @@ async def lifespan(app: FastAPI):
         
     account_service = AccountService(conn.ib)
     hist_service = HistoricalDataService(conn.ib)
+    set_instruments_ib(conn.ib if conn else None)
+    set_subscriptions_ib(conn.ib if conn else None)
     
     # Start autonomous market data pipeline (no UI required)
     market_data_service = MarketDataService(conn.ib)
@@ -100,20 +114,25 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_ib_market_data_watchdog())
     
-    # 3. Start Background Event Consumers
+    # 4. Start Background Event Consumers
     try:
+        sm_sync_worker = SecurityMasterSyncWorker()
+        sm_sync_worker.start()
+
         sub_worker = SubscriptionWorker(market_data_service)
         sub_worker.start()
         
         tick_worker = TickIngestionWorker()
         tick_worker.start()
-        logger.success("Started background subscription and tick ingestion workers.")
+        logger.success("Started background workers (SM sync, subscriptions, ticks).")
     except Exception as e:
         logger.error(f"Failed to start background workers: {e}")
 
     yield
     
     logger.info("Cleaning up connections...")
+    if sm_sync_worker:
+        sm_sync_worker.stop()
     if sub_worker:
         sub_worker.stop()
     if tick_worker:
@@ -145,6 +164,8 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(market_router)
+app.include_router(instruments_router)
+app.include_router(subscriptions_router)
 
 
 @app.get("/api/stats/today-ticks")
@@ -171,13 +192,24 @@ async def get_today_ticks_count():
 
 @app.get("/api/status")
 async def get_status():
-    """Returns the current connection status to the Gateway."""
+    """Returns connection status for IB Gateway, PostgreSQL, ClickHouse, and Kafka."""
     is_connected = conn.ib.isConnected() if conn else False
+    pg_ok = check_postgres_health()
+    ch_ok = False
+    kafka_ok = kafka_producer.producer is not None
+    try:
+        ch_manager.get_client().command("SELECT 1")
+        ch_ok = True
+    except Exception:
+        pass
     return {
         "connected": is_connected,
         "host": conn.host if conn else None,
         "port": conn.port if conn else None,
-        "client_id": conn.client_id if conn else None
+        "client_id": conn.client_id if conn else None,
+        "postgres": pg_ok,
+        "clickhouse": ch_ok,
+        "kafka": kafka_ok,
     }
 
 @app.get("/api/account")
@@ -372,49 +404,6 @@ async def client_log(data: dict):
     logger.error(f"====== CLIENT-SIDE ERROR ======\nMessage: {data.get('message')}\nStack: {data.get('stack')}\n===============================")
     return {"status": "logged"}
 
-@app.get("/api/instruments/search")
-async def search_instrument(symbol: str = Query(...), sec_type: str = Query("STK")):
-    """Searches and qualifies an instrument on Interactive Brokers."""
-    if not conn or not conn.ib.isConnected():
-        return {"error": "Not connected to IB Gateway"}
-    try:
-        sec_type_upper = sec_type.upper()
-        # Clean symbol to handle futures (e.g. /ES -> ES)
-        clean_symbol = symbol.lstrip('/')
-        
-        if sec_type_upper == "FUT":
-            # standard futures, use common defaults or CME/USD
-            contract = Future(clean_symbol, exchange="CME", currency="USD")
-        elif sec_type_upper == "IND":
-            contract = Index(clean_symbol, "CBOE", "USD")
-        elif sec_type_upper == "CASH": # Forex
-            contract = Forex(clean_symbol)
-        else: # STK
-            contract = Stock(clean_symbol, "SMART", "USD")
-            
-        qualified = await conn.ib.qualifyContractsAsync(contract)
-        if not qualified:
-            return {"error": f"Symbol qualification failed: {symbol}"}
-        
-        contract = qualified[0]
-        # Request contract details to get the company/contract long name
-        details = await conn.ib.reqContractDetailsAsync(contract)
-        long_name = details[0].longName if details else clean_symbol
-        
-        return {
-            "symbol": symbol.upper(),
-            "conId": contract.conId,
-            "exchange": contract.exchange,
-            "secType": contract.secType,
-            "currency": contract.currency,
-            "name": long_name,
-            "primaryExchange": getattr(contract, "primaryExchange", "N/A"),
-            "tradingClass": getattr(contract, "tradingClass", "N/A")
-        }
-    except Exception as e:
-        logger.error(f"Error qualifying contract: {e}")
-        return {"error": str(e)}
-
 @app.websocket("/api/ws/ticks")
 async def websocket_ticks(websocket: WebSocket, symbols: str = "AAPL"):
     """WebSocket stream for real-time bid/ask tick data from MarketDataService for multiple comma-separated symbols."""
@@ -454,8 +443,11 @@ async def websocket_bars(websocket: WebSocket, symbol: str = "EURUSD"):
         if len(symbol) == 6:
             contract = Forex(symbol)
             bar_type = "MIDPOINT"
-        elif symbol == "SPX":
-            contract = Index("SPX", "CBOE", "USD")
+        elif symbol in ("SPX", "DJI", "OEX", "RUT", "VIX"):
+            contract = Index(symbol, "CBOE", "USD")
+            bar_type = "TRADES"
+        elif symbol in ("NDX", "COMP"):
+            contract = Index(symbol, "NASDAQ", "USD")
             bar_type = "TRADES"
         else:
             contract = Stock(symbol, "SMART", "USD")

@@ -94,6 +94,7 @@ class ClickHouseManager:
         if instrument_count == 0:
             default_instruments = [
                 (3182352, "SPX", "CBOE", "IND", "USD", "S&P 500 Index"),
+                (416843, "NDX", "NASDAQ", "IND", "USD", "NASDAQ 100 Index"),
                 (18053702, "DJI", "CBOE", "IND", "USD", "Dow Jones Industrial Average"),
                 (265598, "AAPL", "SMART", "STK", "USD", "Apple Inc."),
                 (4815758, "NVDA", "SMART", "STK", "USD", "NVIDIA Corporation"),
@@ -124,6 +125,7 @@ class ClickHouseManager:
         CREATE TABLE IF NOT EXISTS user_subscriptions (
             subscription_id String DEFAULT toString(generateUUIDv4()),
             user_id String,
+            instrument_id UInt64 DEFAULT 0,
             con_id UInt32,
             symbol LowCardinality(String),
             is_active UInt8 DEFAULT 1,
@@ -132,6 +134,15 @@ class ClickHouseManager:
         ORDER BY (user_id, con_id);
         """)
         logger.info("User Subscriptions table verified.")
+
+        # Add instrument_id column if upgrading from older schema
+        try:
+            client.command(
+                f"ALTER TABLE {self.database}.user_subscriptions "
+                "ADD COLUMN IF NOT EXISTS instrument_id UInt64 DEFAULT 0"
+            )
+        except Exception:
+            pass
 
         # Raw Ticks table — full depth-of-book schema
         # ts stores wall-clock Eastern Time (America/New_York = EST/EDT)

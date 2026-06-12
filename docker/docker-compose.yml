@@ -59,6 +59,24 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres:
+    image: postgres:16
+    container_name: spikeiq_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-security_master}
+      POSTGRES_USER: ${POSTGRES_USER:-trade_analytics}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trade_analytics_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trade_analytics} -d ${POSTGRES_DB:-security_master}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: apache/kafka:latest
     container_name: kafka
@@ -95,6 +113,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       kafka:
         condition: service_started
     ports:
@@ -112,6 +132,13 @@ services:
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-clickhouse_pass}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-trade_analytics_us}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-trade_analytics}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trade_analytics_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-security_master}
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-trade_analytics}:${POSTGRES_PASSWORD:-trade_analytics_pass}@postgres:5432/${POSTGRES_DB:-security_master}
+      - DEFAULT_STREAM_SYMBOLS=${DEFAULT_STREAM_SYMBOLS:-AAPL,MSFT,NVDA,TSLA,SPX,NDX,SPCX,META,GOOGL,AMZN}
     logging:
       driver: "json-file"
       options:
@@ -134,9 +161,36 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  scheduler:
+    build:
+      context: ..
+      dockerfile: Dockerfile.backend
+    container_name: quant_scheduler
+    restart: always
+    command: python scripts/scheduler.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      ib-gateway:
+        condition: service_healthy
+    environment:
+      - IB_HOST=ib-gateway
+      - IB_PORT=4004
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-trade_analytics}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-trade_analytics_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-security_master}
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-trade_analytics}:${POSTGRES_PASSWORD:-trade_analytics_pass}@postgres:5432/${POSTGRES_DB:-security_master}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+
 volumes:
   tws_settings:
     driver: local
   clickhouse_data:
+    driver: local
+  postgres_data:
     driver: local
 

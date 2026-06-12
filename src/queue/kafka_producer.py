@@ -34,7 +34,7 @@ class KafkaProducerWrapper:
     def _ensure_topics_exist(self):
         """Auto-creates the necessary topics if they are missing in the Kafka broker."""
         admin_client = AdminClient({'bootstrap.servers': self.bootstrap_servers})
-        topics = ["user-subscriptions", "market-ticks"]
+        topics = ["user-subscriptions", "market-ticks", "security_master_updates"]
         
         try:
             metadata = admin_client.list_topics(timeout=5.0)

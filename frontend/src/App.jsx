@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './Sidebar';
+import InstrumentsCatalog from './pages/InstrumentsCatalog';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
 import {
   Activity,
@@ -48,6 +49,8 @@ import {
 
 const DEFAULT_SUBSCRIBED = [
   { symbol: 'SPX', name: 'S&P 500 Index', secType: 'IND', exchange: 'CBOE', conId: 3182352 },
+  { symbol: 'NDX', name: 'NASDAQ 100 Index', secType: 'IND', exchange: 'NASDAQ', conId: 416843 },
+  { symbol: 'COMP', name: 'NASDAQ Composite Index', secType: 'IND', exchange: 'NASDAQ', conId: 416904 },
   { symbol: 'DJI', name: 'Dow Jones Industrial Average', secType: 'IND', exchange: 'CBOE', conId: 18053702 },
   { symbol: 'AAPL', name: 'Apple Inc.', secType: 'STK', exchange: 'SMART', conId: 265598 },
   { symbol: 'NVDA', name: 'NVIDIA Corporation', secType: 'STK', exchange: 'SMART', conId: 4815758 },
@@ -66,11 +69,14 @@ const DEFAULT_SUBSCRIBED = [
   { symbol: 'SNOW', name: 'Snowflake Inc.', secType: 'STK', exchange: 'SMART', conId: 442526569 },
   { symbol: 'CRWD', name: 'CrowdStrike Holdings, Inc.', secType: 'STK', exchange: 'SMART', conId: 369234857 },
   { symbol: 'ORCL', name: 'Oracle Corporation', secType: 'STK', exchange: 'SMART', conId: 273036 },
-  { symbol: 'BABA', name: 'Alibaba Group Holding Limited', secType: 'STK', exchange: 'SMART', conId: 166090175 }
+  { symbol: 'BABA', name: 'Alibaba Group Holding Limited', secType: 'STK', exchange: 'SMART', conId: 166090175 },
+  { symbol: 'SPCX', name: 'Space Exploration Technologies Corp. (SpaceX)', secType: 'STK', exchange: 'NASDAQ', conId: 0 }
 ];
 
 const INITIAL_PRICES = {
   SPX: { price: 7424.48, changePct: 0.55, direction: 'up', change: 40.75 },
+  NDX: { price: 25840.12, changePct: 0.62, direction: 'up', change: 159.44 },
+  COMP: { price: 19842.55, changePct: 0.58, direction: 'up', change: 114.32 },
   DJI: { price: 50821.83, changePct: -0.09, direction: 'down', change: -44.96 },
   AAPL: { price: 305.13, changePct: -0.72, direction: 'down', change: -2.21 },
   NVDA: { price: 208.94, changePct: 1.87, direction: 'up', change: 3.84 },
@@ -89,7 +95,8 @@ const INITIAL_PRICES = {
   SNOW: { price: 241.95, changePct: 1.55, direction: 'up', change: 3.69 },
   CRWD: { price: 659.03, changePct: -1.79, direction: 'down', change: -11.99 },
   ORCL: { price: 213.12, changePct: -0.26, direction: 'down', change: -0.56 },
-  BABA: { price: 120.25, changePct: -0.67, direction: 'down', change: -0.81 }
+  BABA: { price: 120.25, changePct: -0.67, direction: 'down', change: -0.81 },
+  SPCX: { price: 135.00, changePct: 0.00, direction: 'up', change: 0.00 }
 };
 
 const getSymbolType = (symbol) => {
@@ -366,11 +373,12 @@ export default function App() {
 
   const [digitalClockTime, setDigitalClockTime] = useState('');
 
-  // Subscriptions persisted in localStorage
+  // Subscriptions persisted in localStorage (fallback) + synced from API
   const [subscribedInstruments, setSubscribedInstruments] = useState(() => {
     const saved = localStorage.getItem('subscribed_instruments');
     return saved ? JSON.parse(saved) : DEFAULT_SUBSCRIBED;
   });
+  const [subscribedInstrumentIds, setSubscribedInstrumentIds] = useState(new Set());
 
   const [gatewayStatus, setGatewayStatus] = useState({ connected: false, host: '', port: null });
   const [account, setAccount] = useState({ netLiquidation: 0, cashBalance: 0, buyingPower: 0, currency: 'USD' });
@@ -431,6 +439,34 @@ export default function App() {
   const wsUrl = isLocalDev
     ? 'ws://localhost:8000/api/ws'
     : `${wsProtocol}//${window.location.host}/api/ws`;
+
+  const fetchSubscriptions = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${restUrl}/subscriptions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      const items = data.items || [];
+      setSubscribedInstrumentIds(new Set(items.map((i) => i.instrument_id)));
+      if (items.length > 0) {
+        setSubscribedInstruments(
+          items.map((i) => ({
+            instrument_id: i.instrument_id,
+            symbol: i.symbol,
+            conId: i.con_id,
+            secType: 'STK',
+          }))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to fetch subscriptions:', err);
+    }
+  }, [token, restUrl]);
+
+  useEffect(() => {
+    fetchSubscriptions();
+  }, [fetchSubscriptions]);
 
   // Persist subscriptions to localStorage
   useEffect(() => {
@@ -1019,6 +1055,7 @@ export default function App() {
         setUserProfile(prev => ({ ...prev, traderName: data.username }));
         setAuthPassword('');
         setAuthError('');
+        // Subscriptions loaded via fetchSubscriptions effect
       }
     } catch (err) {
       setAuthError("Server connection failed. Make sure backend is running.");
@@ -2128,269 +2165,23 @@ export default function App() {
           {/* ================= PAGE VIEW: INSTRUMENTS ================= */}
           {currentPage === 'instruments' && (
             <main style={{ display: 'flex', flexDirection: 'column', gap: '28px', flex: 1 }}>
-
-              {/* HEADER ROW */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', padding: '10px', borderRadius: '10px' }}>
-                    <Search style={{ color: 'var(--text-primary)', width: '24px', height: '24px' }} />
-                  </div>
-                  <div>
-                    <h2 style={{ fontSize: '22px', fontWeight: 800, fontFamily: 'var(--font-heading)', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      Instruments Manager
-                    </h2>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      Manage active stock, index, and future tickers subscribed in the streaming dashboard
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setSubscribedInstruments(DEFAULT_SUBSCRIBED);
-                    setSearchSuccess("Reset to default subscriptions.");
-                  }}
-                  className="btn-tab"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '11px',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    background: 'var(--bg-card)'
-                  }}
-                >
-                  <RefreshCw style={{ width: '13px', height: '13px' }} />
-                  Reset Defaults
-                </button>
-              </div>
-
-              {/* SEARCH & ADD INSTRUMENT FORM */}
-              <div className="glass-panel" style={{ padding: '24px' }}>
-                <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.8px', marginBottom: '16px', textTransform: 'uppercase' }}>
-                  SEARCH & ADD INSTRUMENTS
-                </p>
-
-                <form onSubmit={handleAddInstrument} style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-
-                  <div style={{ flex: 1, minWidth: '220px' }}>
-                    <div style={{ position: 'relative' }}>
-                      <Search style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', width: '16px', height: '16px', color: 'var(--text-muted)' }} />
-                      <input
-                        type="text"
-                        value={searchSymbol}
-                        onChange={(e) => setSearchSymbol(e.target.value)}
-                        placeholder="Search for AAPL, SPX, /ES, EURUSD..."
-                        style={{
-                          width: '100%',
-                          background: 'var(--bg-input)',
-                          border: '1px solid var(--border-color)',
-                          padding: '10px 12px 10px 38px',
-                          borderRadius: '8px',
-                          color: 'var(--text-primary)',
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          outline: 'none',
-                          transition: 'border-color 0.2s'
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ width: '130px' }}>
-                    <select
-                      value={searchSecType}
-                      onChange={(e) => setSearchSecType(e.target.value)}
-                      style={{
-                        width: '100%',
-                        background: 'var(--sidebar-bg)',
-                        border: '1px solid var(--border-color)',
-                        padding: '10px 12px',
-                        borderRadius: '8px',
-                        color: 'var(--text-primary)',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        outline: 'none',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <option value="STK">NYSE/NQ</option>
-                      <option value="IND">CBOE</option>
-                      <option value="FUT">CME FUT</option>
-                      <option value="CASH">FOREX</option>
-                    </select>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={searchLoading}
-                    style={{
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border-color)',
-                      color: 'var(--text-primary)',
-                      padding: '10px 24px',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      minWidth: '120px',
-                      justifyContent: 'center',
-                      transition: 'var(--transition)'
-                    }}
-                  >
-                    {searchLoading ? (
-                      <RefreshCw style={{ animation: 'spin 1.5s linear infinite', width: '16px', height: '16px' }} />
-                    ) : (
-                      <>
-                        <Search style={{ width: '15px', height: '15px' }} />
-                        Search
-                      </>
-                    )}
-                  </button>
-                </form>
-
-                {searchError && (
-                  <div style={{
-                    marginTop: '16px', padding: '12px 16px', background: 'var(--red-bg)',
-                    border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px',
-                    display: 'flex', alignItems: 'center', gap: '10px', color: '#fca5a5', fontSize: '13px'
-                  }}>
-                    <AlertCircle style={{ color: 'var(--red)', width: '16px', height: '16px' }} />
-                    <span>{searchError}</span>
-                  </div>
-                )}
-
-                {searchSuccess && (
-                  <div style={{
-                    marginTop: '16px', padding: '12px 16px', background: 'var(--green-bg)',
-                    border: '1px solid rgba(34, 232, 122, 0.2)', borderRadius: '8px',
-                    display: 'flex', alignItems: 'center', gap: '10px', color: '#a7f3d0', fontSize: '13px'
-                  }}>
-                    <CheckCircle style={{ color: 'var(--green)', width: '16px', height: '16px' }} />
-                    <span>{searchSuccess}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* SUBSCRIBED INSTRUMENTS TABLE */}
-              <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-                  <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.8px', textTransform: 'uppercase' }}>
-                    ACTIVE INSTRUMENTS ({subscribedInstruments.length})
-                  </p>
-
-                  <div style={{ display: 'flex', gap: '6px', background: 'rgba(255, 255, 255, 0.02)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                    {['ALL', 'STOCKS', 'INDICES', 'FUTURES', 'FOREX'].map((filter) => {
-                      const count = subscribedInstruments.filter(inst => {
-                        if (filter === 'ALL') return true;
-                        if (filter === 'STOCKS') return inst.secType === 'STK';
-                        if (filter === 'INDICES') return inst.secType === 'IND';
-                        if (filter === 'FUTURES') return inst.secType === 'FUT';
-                        if (filter === 'FOREX') return inst.secType === 'CASH';
-                        return false;
-                      }).length;
-
-                      return (
-                        <button
-                          key={filter}
-                          onClick={() => setInstrumentFilter(filter)}
-                          className={`btn-tab ${instrumentFilter === filter ? 'active' : ''}`}
-                          style={{ fontSize: '10px', padding: '6px 12px' }}
-                        >
-                          {filter.charAt(0) + filter.slice(1).toLowerCase()} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', height: '40px' }}>
-                        <th style={{ paddingLeft: '12px' }}>Symbol</th>
-                        <th>Long Name / Description</th>
-                        <th>Primary Exchange</th>
-                        <th>Type</th>
-                        <th>Contract ID (conId)</th>
-                        <th style={{ textAlign: 'right', paddingRight: '12px' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredInstruments.length === 0 ? (
-                        <tr>
-                          <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '14px' }}>
-                            No instruments match this filter. Subscribe to symbols above.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredInstruments.map((inst) => (
-                          <tr
-                            key={inst.symbol}
-                            style={{
-                              borderBottom: '1px solid rgba(255,255,255,0.03)',
-                              height: '52px',
-                              transition: 'background 0.2s'
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-card-hover)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                          >
-                            <td style={{ paddingLeft: '12px', fontWeight: 800, color: 'var(--accent-primary)' }}>
-                              {inst.symbol}
-                            </td>
-                            <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
-                              {inst.name || inst.symbol}
-                            </td>
-                            <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                              {inst.exchange || 'SMART'}
-                            </td>
-                            <td>
-                              <span className={getBadgeClass(inst.secType)}>
-                                {inst.secType === 'STK' && 'Stock'}
-                                {inst.secType === 'IND' && 'Index'}
-                                {inst.secType === 'FUT' && 'Future'}
-                                {inst.secType === 'CASH' && 'Forex'}
-                              </span>
-                            </td>
-                            <td style={{ color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                              {inst.conId}
-                            </td>
-                            <td style={{ textAlign: 'right', paddingRight: '12px' }}>
-                              <button
-                                onClick={() => handleRemoveInstrument(inst.symbol)}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  color: 'var(--red)',
-                                  cursor: 'pointer',
-                                  padding: '6px 12px',
-                                  borderRadius: '6px',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  transition: 'background 0.2s',
-                                  outline: 'none'
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--red-bg)'}
-                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                title="Unsubscribe Asset"
-                              >
-                                <Trash2 style={{ width: '15px', height: '15px' }} />
-                                <span style={{ fontSize: '11px', fontWeight: 600 }}>Remove</span>
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
+              <InstrumentsCatalog
+                restUrl={restUrl}
+                token={token}
+                subscribedIds={subscribedInstrumentIds}
+                onSubscribe={(id) => {
+                  setSubscribedInstrumentIds((prev) => new Set([...prev, id]));
+                }}
+                onUnsubscribe={(id) => {
+                  setSubscribedInstrumentIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                  });
+                  setSubscribedInstruments((prev) => prev.filter((i) => i.instrument_id !== id));
+                }}
+                onSubscriptionsChange={fetchSubscriptions}
+              />
             </main>
           )}
 

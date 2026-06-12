@@ -13,6 +13,8 @@ class SubscriptionPayload(BaseModel):
 
 @router.post("/subscribe")
 async def subscribe(payload: SubscriptionPayload, user: dict = Depends(get_current_user)):
+    """Deprecated: use POST /api/subscriptions with instrument_id instead."""
+    logger.warning("POST /api/market/subscribe is deprecated; use POST /api/subscriptions")
     username = user["sub"]
     symbol_upper = payload.symbol.strip().upper()
     

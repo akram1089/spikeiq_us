@@ -5,51 +5,106 @@ from typing import Dict, Set
 from loguru import logger
 import math
 from config import settings
-from src.db.clickhouse_client import ch_manager
+from src.db.postgres import SessionLocal
+from src.security_master.repository import InstrumentRepository
 
 class MarketDataService:
-    """Streams live market data to Kafka; IB subscriptions are independent of WebSocket clients."""
+    """Streams live market data to Kafka; IB subscriptions keyed by instrument_id."""
 
     def __init__(self, ib: IB):
         self.ib = ib
         self.websockets: Dict[str, Set] = {}
-        self.cache: Dict[str, dict] = {}
-        self.contracts: Dict[str, Contract] = {}
-        self.tickers: Dict[str, Ticker] = {}
-        self.always_stream: Set[str] = set()
+        self.cache: Dict[int, dict] = {}
+        self.contracts: Dict[int, Contract] = {}
+        self.tickers: Dict[int, Ticker] = {}
+        self.instrument_meta: Dict[int, dict] = {}
+        self.symbol_to_id: Dict[str, int] = {}
+        self.always_stream: Set[int] = set()
         self.active = False
         self._loop = None
 
-    def _cache_for(self, symbol: str) -> dict:
-        if symbol not in self.cache:
-            self.cache[symbol] = {"last": None, "bid": None, "ask": None, "volume": None}
-        return self.cache[symbol]
+    def _cache_for(self, instrument_id: int) -> dict:
+        if instrument_id not in self.cache:
+            self.cache[instrument_id] = {
+                "last": None, "bid": None, "ask": None, "volume": None, "close": None
+            }
+        return self.cache[instrument_id]
 
-    async def _load_stream_symbols_from_db(self):
-        """Merge active instruments from ClickHouse into the always-on stream set."""
+    def _load_instrument_meta(self, instrument_id: int) -> dict | None:
+        if instrument_id in self.instrument_meta:
+            return self.instrument_meta[instrument_id]
+        db = SessionLocal()
         try:
-            client = ch_manager.get_client()
-            rows = client.query(f"""
-                SELECT DISTINCT symbol
-                FROM {settings.CLICKHOUSE_DB}.instruments FINAL
-                WHERE is_active = 1
-            """).result_rows
-            for (symbol,) in rows:
-                self.always_stream.add(symbol.upper())
-            if rows:
-                logger.info(f"Loaded {len(rows)} active instrument(s) from ClickHouse")
+            repo = InstrumentRepository(db)
+            inst = repo.get_by_id(instrument_id)
+            if not inst or not inst.ibkr_conid:
+                return None
+            meta = {
+                "instrument_id": inst.id,
+                "symbol": inst.symbol,
+                "ibkr_conid": inst.ibkr_conid,
+                "exchange": inst.exchange or "SMART",
+                "currency": inst.currency or "USD",
+            }
+            self.instrument_meta[instrument_id] = meta
+            self.symbol_to_id[inst.symbol.upper()] = instrument_id
+            return meta
+        finally:
+            db.close()
+
+    async def _load_stream_instruments_from_db(self):
+        """Load active resolved instruments from PostgreSQL Security Master."""
+        try:
+            db = SessionLocal()
+            try:
+                repo = InstrumentRepository(db)
+                for inst in repo.list_active_resolved():
+                    self.always_stream.add(inst.id)
+                    self.instrument_meta[inst.id] = {
+                        "instrument_id": inst.id,
+                        "symbol": inst.symbol,
+                        "ibkr_conid": inst.ibkr_conid,
+                        "exchange": inst.exchange or "SMART",
+                        "currency": inst.currency or "USD",
+                    }
+                    self.symbol_to_id[inst.symbol.upper()] = inst.id
+                if self.instrument_meta:
+                    logger.info(
+                        f"Loaded {len(self.instrument_meta)} active instrument(s) from PostgreSQL"
+                    )
+            finally:
+                db.close()
         except Exception as e:
-            logger.error(f"Failed to load instruments from ClickHouse: {e}")
+            logger.error(f"Failed to load instruments from PostgreSQL: {e}")
+
+    async def _resolve_default_stream_symbols(self):
+        """Map DEFAULT_STREAM_SYMBOLS env to instrument_ids in Security Master."""
+        db = SessionLocal()
+        try:
+            repo = InstrumentRepository(db)
+            for symbol in settings.DEFAULT_STREAM_SYMBOLS:
+                inst = repo.get_by_symbol(symbol.upper())
+                if inst and inst.ibkr_conid:
+                    self.always_stream.add(inst.id)
+                    self.instrument_meta[inst.id] = {
+                        "instrument_id": inst.id,
+                        "symbol": inst.symbol,
+                        "ibkr_conid": inst.ibkr_conid,
+                        "exchange": inst.exchange or "SMART",
+                        "currency": inst.currency or "USD",
+                    }
+                    self.symbol_to_id[inst.symbol.upper()] = inst.id
+        finally:
+            db.close()
 
     async def ensure_autonomous_streaming(self, force_resubscribe: bool = False):
-        """Start or restore IB subscriptions for all production stream symbols."""
-        for symbol in settings.DEFAULT_STREAM_SYMBOLS:
-            self.always_stream.add(symbol.upper())
-        await self._load_stream_symbols_from_db()
+        """Start or restore IB subscriptions for all production stream instruments."""
+        await self._load_stream_instruments_from_db()
+        await self._resolve_default_stream_symbols()
 
         if not self.ib.isConnected():
             logger.warning(
-                f"IB not connected; {len(self.always_stream)} symbol(s) queued for streaming on reconnect"
+                f"IB not connected; {len(self.always_stream)} instrument(s) queued for streaming"
             )
             return
 
@@ -59,25 +114,22 @@ class MarketDataService:
         if force_resubscribe:
             self._clear_ib_subscriptions()
 
-        for symbol in sorted(self.always_stream):
-            await self._subscribe_to_symbol(symbol)
+        for instrument_id in sorted(self.always_stream):
+            await self._subscribe_to_instrument(instrument_id)
 
         logger.success(
-            f"Autonomous streaming active for {len(self.always_stream)} symbol(s): "
-            f"{sorted(self.always_stream)}"
+            f"Autonomous streaming active for {len(self.always_stream)} instrument(s)"
         )
 
     async def ensure_subscriptions(self):
-        """Alias used by reconnect watchdog."""
         await self.ensure_autonomous_streaming(force_resubscribe=True)
 
     def _clear_ib_subscriptions(self):
-        """Drop local IB handles after gateway disconnect so symbols can be re-requested."""
-        for symbol, ticker in list(self.tickers.items()):
+        for iid, ticker in list(self.tickers.items()):
             try:
                 ticker.updateEvent.clear()
-                if symbol in self.contracts:
-                    self.ib.cancelMktData(self.contracts[symbol])
+                if iid in self.contracts:
+                    self.ib.cancelMktData(self.contracts[iid])
             except Exception:
                 pass
         self.tickers.clear()
@@ -91,39 +143,56 @@ class MarketDataService:
         self.active = False
         logger.success("MarketDataService stopped.")
 
-    async def _subscribe_to_symbol(self, symbol: str):
-        if symbol in self.contracts:
+    async def _subscribe_to_instrument(self, instrument_id: int):
+        if instrument_id in self.contracts:
+            return
+        meta = self._load_instrument_meta(instrument_id)
+        if not meta:
+            logger.error(f"No metadata for instrument_id={instrument_id}")
             return
         try:
-            if len(symbol) == 6:
-                contract = Forex(symbol)
-            elif symbol == "SPX":
-                contract = Index("SPX", "CBOE", "USD")
-            elif symbol == "DJI":
-                contract = Index("DJI", "CBOE", "USD")
-            else:
-                contract = Stock(symbol, "SMART", "USD")
-
+            contract = Contract(conId=int(meta["ibkr_conid"]))
             qualified = await self.ib.qualifyContractsAsync(contract)
-            if qualified:
-                self.contracts[symbol] = qualified[0]
-                ticker = self.ib.reqMktData(qualified[0], "", False, False)
-                ticker.updateEvent += lambda t, s=symbol: self._on_ticker_update(s, t)
-                self.tickers[symbol] = ticker
-                self._cache_for(symbol)
-                logger.success(f"IB market data subscription active for: {symbol}")
-            else:
-                logger.error(f"Failed to qualify contract for symbol: {symbol}")
+            if not qualified:
+                logger.error(f"Failed to qualify conId={meta['ibkr_conid']} for id={instrument_id}")
+                return
+            contract = qualified[0]
+            self.contracts[instrument_id] = contract
+            ticker = self.ib.reqMktData(contract, "", False, False)
+            ticker.updateEvent += lambda t, i=instrument_id: self._on_ticker_update(i, t)
+            self.tickers[instrument_id] = ticker
+            self._cache_for(instrument_id)
+            logger.success(
+                f"IB market data subscription active: {meta['symbol']} (id={instrument_id})"
+            )
         except Exception as e:
-            logger.error(f"Error subscribing to {symbol}: {e}")
+            logger.error(f"Error subscribing to instrument_id={instrument_id}: {e}")
 
-    def request_streaming(self, symbol: str):
-        """Add a symbol to the always-on pipeline (e.g. user subscribe event)."""
-        symbol = symbol.upper()
-        self.always_stream.add(symbol)
-        self._cache_for(symbol)
+    def request_streaming(self, instrument_id: int):
+        """Add an instrument to the always-on pipeline."""
+        self.always_stream.add(instrument_id)
+        self._load_instrument_meta(instrument_id)
+        self._cache_for(instrument_id)
         if self._loop and self.ib.isConnected():
-            asyncio.run_coroutine_threadsafe(self._subscribe_to_symbol(symbol), self._loop)
+            asyncio.run_coroutine_threadsafe(
+                self._subscribe_to_instrument(instrument_id), self._loop
+            )
+
+    def request_streaming_by_symbol(self, symbol: str):
+        """Backward-compatible symbol-based streaming."""
+        symbol = symbol.upper()
+        iid = self.symbol_to_id.get(symbol)
+        if iid:
+            self.request_streaming(iid)
+            return
+        db = SessionLocal()
+        try:
+            repo = InstrumentRepository(db)
+            inst = repo.get_by_symbol(symbol)
+            if inst and inst.ibkr_conid:
+                self.request_streaming(inst.id)
+        finally:
+            db.close()
 
     def register_websocket(self, symbol: str, websocket):
         symbol = symbol.upper()
@@ -131,11 +200,10 @@ class MarketDataService:
             self.websockets[symbol] = set()
         if websocket is not None:
             self.websockets[symbol].add(websocket)
-        self.request_streaming(symbol)
+        self.request_streaming_by_symbol(symbol)
         logger.info(f"Registered WebSocket client for {symbol}")
 
     def unregister_websocket(self, symbol: str, websocket):
-        """Remove a UI client only — never tears down production IB streaming."""
         if symbol not in self.websockets or websocket not in self.websockets[symbol]:
             return
         self.websockets[symbol].remove(websocket)
@@ -143,15 +211,12 @@ class MarketDataService:
         if not self.websockets[symbol]:
             del self.websockets[symbol]
 
-    def _on_ticker_update(self, symbol: str, ticker: Ticker):
-        """Fires on every individual IB tick — no batching, zero delay."""
-        logger.debug(
-            f"Tick update received for {symbol}: last={ticker.last}, "
-            f"bid={ticker.bid}, ask={ticker.ask}, close={ticker.close}"
-        )
-        if symbol not in self.contracts:
+    def _on_ticker_update(self, instrument_id: int, ticker: Ticker):
+        meta = self.instrument_meta.get(instrument_id) or self._load_instrument_meta(instrument_id)
+        if not meta or instrument_id not in self.contracts:
             return
 
+        symbol = meta["symbol"]
         loop = self._loop
 
         def _safe_float(val):
@@ -167,7 +232,7 @@ class MarketDataService:
         new_ask = _safe_float(ticker.ask)
         new_close = _safe_float(ticker.close)
 
-        cache = self._cache_for(symbol)
+        cache = self._cache_for(instrument_id)
 
         if (
             new_last == cache.get("last")
@@ -209,9 +274,9 @@ class MarketDataService:
             )
 
         try:
-            contract = self.contracts.get(symbol)
-            con_id = contract.conId if contract else 0
-            exchange = contract.exchange if contract else "SMART"
+            contract = self.contracts.get(instrument_id)
+            con_id = contract.conId if contract else meta["ibkr_conid"]
+            exchange = contract.exchange if contract else meta["exchange"]
 
             def _safe_int(val):
                 try:
@@ -233,6 +298,7 @@ class MarketDataService:
             change = round(ltp - close_price, 4) if ltp and close_price else 0.0
 
             kafka_msg = {
+                "instrument_id": instrument_id,
                 "instrument_token": con_id,
                 "symbol": symbol,
                 "exchange": exchange,
@@ -250,31 +316,23 @@ class MarketDataService:
                 "bid_qty_1": bid_qty_1,
                 "ask_price_1": ask_price_1,
                 "ask_qty_1": ask_qty_1,
-                "bid_price_2": 0,
-                "bid_qty_2": 0,
-                "bid_price_3": 0,
-                "bid_qty_3": 0,
-                "bid_price_4": 0,
-                "bid_qty_4": 0,
-                "bid_price_5": 0,
-                "bid_qty_5": 0,
-                "ask_price_2": 0,
-                "ask_qty_2": 0,
-                "ask_price_3": 0,
-                "ask_qty_3": 0,
-                "ask_price_4": 0,
-                "ask_qty_4": 0,
-                "ask_price_5": 0,
-                "ask_qty_5": 0,
+                "bid_price_2": 0, "bid_qty_2": 0,
+                "bid_price_3": 0, "bid_qty_3": 0,
+                "bid_price_4": 0, "bid_qty_4": 0,
+                "bid_price_5": 0, "bid_qty_5": 0,
+                "ask_price_2": 0, "ask_qty_2": 0,
+                "ask_price_3": 0, "ask_qty_3": 0,
+                "ask_price_4": 0, "ask_qty_4": 0,
+                "ask_price_5": 0, "ask_qty_5": 0,
                 "ts": ts_str,
             }
             from src.queue.kafka_producer import kafka_producer
-
             kafka_producer.publish("market-ticks", str(con_id), kafka_msg)
         except Exception as ke:
             logger.error(f"Failed to publish tick to Kafka: {ke}")
 
         msg = {
+            "instrument_id": instrument_id,
             "symbol": symbol,
             "last": cache.get("last"),
             "bid": cache.get("bid"),

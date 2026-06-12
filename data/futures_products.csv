@@ -1,0 +1,16 @@
+product_root,exchange,name
+ES,CME,E-mini S&P 500
+MES,CME,Micro E-mini S&P 500
+NQ,CME,E-mini Nasdaq 100
+MNQ,CME,Micro E-mini Nasdaq 100
+RTY,CME,Russell 2000
+YM,CBOT,E-mini Dow
+CL,NYMEX,Crude Oil
+NG,NYMEX,Natural Gas
+GC,COMEX,Gold
+SI,COMEX,Silver
+HG,COMEX,Copper
+ZN,CBOT,10 Year Treasury
+ZT,CBOT,2 Year Treasury
+6E,CME,Euro FX
+6J,CME,Japanese Yen

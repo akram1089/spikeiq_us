@@ -380,3 +380,31 @@ def run_worker(market_data_service: MarketDataService):
 1. **Async ClickHouse Inserts:** When writing ticks to `raw_ticks`, setting `settings={"async_insert": 1, "wait_for_async_insert": 0}` forces ClickHouse to buffer and write batches, which prevents the server from hitting parts-limit overhead issues.
 2. **Kafka Linger Configuration:** Use `"linger.ms": 5` or `"linger.ms": 10` on the producer to buffer ticks and batch publish to Kafka, reducing TCP connection overhead.
 3. **DoubleDelta & LZ4 Codecs:** Applied to the `ts` columns in ClickHouse. Since trading ticks arrive in highly sequential, microsecond-scale steps, the double-delta compression saves up to **80% of storage** for time columns.
+
+---
+
+## 5. PostgreSQL Security Master (Instrument Catalog)
+
+PostgreSQL is the **source of truth** for tradable instruments. All internal APIs use `instrument_id`.
+
+```sql
+CREATE TABLE instruments (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(50) UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    asset_type VARCHAR(20) NOT NULL,  -- STOCK, ETF, INDEX, FUTURE
+    exchange VARCHAR(20),
+    currency VARCHAR(10),
+    ibkr_conid BIGINT NULL,
+    local_symbol VARCHAR(100),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Dual-DB flow:** PostgreSQL master → Kafka `security_master_updates` → ClickHouse `instruments` replica.
+
+**Autonomous streaming symbols** (via `DEFAULT_STREAM_SYMBOLS`): include `NDX`, `COMP`, and `SPCX` (SpaceX) alongside core US equities and `SPX`.
+
+**Sync schedule (America/New_York):** stocks 03:00, priority streaming 03:05, futures 03:15, conId resolution 03:30, indexes Sunday 03:00.
