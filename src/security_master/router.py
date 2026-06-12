@@ -1,6 +1,7 @@
+import asyncio
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from ib_insync import IB
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from src.security_master.service import InstrumentService
 router = APIRouter(prefix="/api/instruments", tags=["instruments"])
 
 _ib_instance: IB | None = None
+_resolve_task: asyncio.Task | None = None
 
 
 def set_ib_instance(ib: IB | None) -> None:
@@ -63,12 +65,26 @@ def list_instruments(
     )
 
 
+async def _run_resolve_pending(service: InstrumentService) -> None:
+    global _resolve_task
+    try:
+        await service.resolve_pending()
+    finally:
+        _resolve_task = None
+
+
 @router.post("/resolve-pending")
 async def resolve_pending_instruments(
     service: InstrumentService = Depends(get_service),
 ):
-    """Resolve IBKR conIds for catalog rows missing ibkr_conid (uses backend IB session)."""
-    return await service.resolve_pending()
+    """Resolve IBKR conIds in the background (does not block the API)."""
+    global _resolve_task
+    if _resolve_task and not _resolve_task.done():
+        return {"status": "running", "message": "Resolution already in progress"}
+    if not _ib_instance or not _ib_instance.isConnected():
+        raise HTTPException(status_code=503, detail="Not connected to IB Gateway")
+    _resolve_task = asyncio.create_task(_run_resolve_pending(service))
+    return {"status": "started", "message": "Resolution running in background"}
 
 
 @router.get("/search", response_model=InstrumentSearchResponse)

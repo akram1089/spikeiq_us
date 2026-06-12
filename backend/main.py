@@ -93,7 +93,12 @@ async def lifespan(app: FastAPI):
     
     # Start autonomous market data pipeline (no UI required)
     market_data_service = MarketDataService(conn.ib)
-    await market_data_service.ensure_autonomous_streaming()
+
+    async def _start_autonomous_streaming():
+        try:
+            await market_data_service.ensure_autonomous_streaming()
+        except Exception as e:
+            logger.error(f"Autonomous streaming startup failed: {e}")
 
     async def _ib_market_data_watchdog():
         """IB Gateway often becomes ready after the backend starts; (re)subscribe on connect."""
@@ -113,7 +118,8 @@ async def lifespan(app: FastAPI):
             was_connected = False
 
     asyncio.create_task(_ib_market_data_watchdog())
-    
+    asyncio.create_task(_start_autonomous_streaming())
+
     # 4. Start Background Event Consumers
     try:
         sm_sync_worker = SecurityMasterSyncWorker()
@@ -190,10 +196,16 @@ async def get_today_ticks_count():
         logger.error(f"Error fetching today ticks count: {e}")
         return {"count": 0, "error": str(e)}
 
+@app.get("/api/health")
+async def health_check():
+    """Lightweight liveness probe for Docker/nginx (does not wait on IB)."""
+    return {"status": "ok"}
+
+
 @app.get("/api/status")
 async def get_status():
     """Returns connection status for IB Gateway, PostgreSQL, ClickHouse, and Kafka."""
-    is_connected = conn.ib.isConnected() if conn else False
+    is_connected = conn.ib.isConnected() if conn and conn.ib else False
     pg_ok = check_postgres_health()
     ch_ok = False
     kafka_ok = kafka_producer.producer is not None

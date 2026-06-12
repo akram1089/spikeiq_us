@@ -52,31 +52,6 @@ class MarketDataService:
         finally:
             db.close()
 
-    async def _load_stream_instruments_from_db(self):
-        """Load active resolved instruments from PostgreSQL Security Master."""
-        try:
-            db = SessionLocal()
-            try:
-                repo = InstrumentRepository(db)
-                for inst in repo.list_active_resolved():
-                    self.always_stream.add(inst.id)
-                    self.instrument_meta[inst.id] = {
-                        "instrument_id": inst.id,
-                        "symbol": inst.symbol,
-                        "ibkr_conid": inst.ibkr_conid,
-                        "exchange": inst.exchange or "SMART",
-                        "currency": inst.currency or "USD",
-                    }
-                    self.symbol_to_id[inst.symbol.upper()] = inst.id
-                if self.instrument_meta:
-                    logger.info(
-                        f"Loaded {len(self.instrument_meta)} active instrument(s) from PostgreSQL"
-                    )
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error(f"Failed to load instruments from PostgreSQL: {e}")
-
     async def _resolve_default_stream_symbols(self):
         """Map DEFAULT_STREAM_SYMBOLS env to instrument_ids in Security Master."""
         db = SessionLocal()
@@ -98,8 +73,7 @@ class MarketDataService:
             db.close()
 
     async def ensure_autonomous_streaming(self, force_resubscribe: bool = False):
-        """Start or restore IB subscriptions for all production stream instruments."""
-        await self._load_stream_instruments_from_db()
+        """Start or restore IB subscriptions for DEFAULT_STREAM_SYMBOLS only."""
         await self._resolve_default_stream_symbols()
 
         if not self.ib.isConnected():
