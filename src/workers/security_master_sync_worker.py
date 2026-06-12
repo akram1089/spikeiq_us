@@ -18,8 +18,9 @@ ASSET_TYPE_TO_SEC_TYPE = {
 class SecurityMasterSyncWorker(threading.Thread):
     """Syncs security_master_updates Kafka events into ClickHouse instruments replica."""
 
-    def __init__(self):
+    def __init__(self, market_data_service=None):
         super().__init__(daemon=True, name="SecurityMasterSyncWorker")
+        self.market_data_service = market_data_service
         self.bootstrap_servers = settings.KAFKA_BOOTSTRAP_SERVERS
         self.group_id = "security-master-sync-group"
         self.running = False
@@ -91,6 +92,10 @@ class SecurityMasterSyncWorker(threading.Thread):
         logger.debug(
             f"Synced instrument {payload.get('instrument_id')} ({payload.get('symbol')}) to ClickHouse"
         )
+
+        instrument_id = payload.get("instrument_id")
+        if is_active and instrument_id and self.market_data_service:
+            self.market_data_service.request_streaming(int(instrument_id))
 
     def stop(self):
         self.running = False

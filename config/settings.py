@@ -49,7 +49,7 @@ CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "trade_analytics_us")
 # Kafka Settings
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
-# Symbols streamed to Kafka/ClickHouse automatically — no UI or user action required
+# Legacy env list (catalog seeding / docs). Autonomous streaming uses ClickHouse instruments.
 DEFAULT_STREAM_SYMBOLS = [
     s.strip().upper()
     for s in os.getenv(

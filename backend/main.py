@@ -122,7 +122,7 @@ async def lifespan(app: FastAPI):
 
     # 4. Start Background Event Consumers
     try:
-        sm_sync_worker = SecurityMasterSyncWorker()
+        sm_sync_worker = SecurityMasterSyncWorker(market_data_service=market_data_service)
         sm_sync_worker.start()
 
         sub_worker = SubscriptionWorker(market_data_service)

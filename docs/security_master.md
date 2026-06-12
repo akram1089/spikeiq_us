@@ -25,9 +25,12 @@ docker exec quant_scheduler python -m scripts.resolve_conids
 curl -X POST https://spikeiq.mooo.com/api/instruments/resolve-pending
 ```
 
-## Priority autonomous streaming instruments
+## Autonomous streaming
 
-These are always included in `DEFAULT_STREAM_SYMBOLS` and seeded into the Security Master:
+All rows in ClickHouse `instruments` with `is_active = 1` are streamed automatically on backend startup.
+User **Subscribe** adds additional instruments via `user_subscriptions` → Kafka → IB.
+
+Priority catalog seeds (also synced to ClickHouse when resolved):
 
 | Symbol | Name | Type |
 |--------|------|------|

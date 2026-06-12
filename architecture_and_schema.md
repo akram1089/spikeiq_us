@@ -405,6 +405,6 @@ CREATE TABLE instruments (
 
 **Dual-DB flow:** PostgreSQL master → Kafka `security_master_updates` → ClickHouse `instruments` replica.
 
-**Autonomous streaming symbols** (via `DEFAULT_STREAM_SYMBOLS`): include `NDX`, `COMP`, and `SPCX` (SpaceX) alongside core US equities and `SPX`.
+**Autonomous streaming** reads active instruments from ClickHouse `instruments` (`is_active = 1`). User subscriptions add more via the subscribe API.
 
 **Sync schedule (America/New_York):** stocks 03:00, priority streaming 03:05, futures 03:15, conId resolution 03:30, indexes Sunday 03:00.

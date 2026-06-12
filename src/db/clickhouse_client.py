@@ -191,5 +191,26 @@ class ClickHouseManager:
         logger.info("Raw Ticks table verified (schema: full depth-of-book, timezone: America/New_York / EST).")
         logger.success("ClickHouse schema initialization complete!")
 
+    def list_active_instruments(self) -> list[dict]:
+        """Active instruments in the catalog replica (autonomous streaming source)."""
+        client = self.get_client()
+        rows = client.query(
+            f"""
+            SELECT con_id, symbol, exchange, sec_type
+            FROM {self.database}.instruments FINAL
+            WHERE is_active = 1 AND con_id > 0
+            ORDER BY symbol
+            """
+        ).result_rows
+        return [
+            {
+                "con_id": int(row[0]),
+                "symbol": str(row[1]).upper(),
+                "exchange": str(row[2] or "SMART"),
+                "sec_type": str(row[3] or "STK"),
+            }
+            for row in rows
+        ]
+
 # Global instance
 ch_manager = ClickHouseManager()

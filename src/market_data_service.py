@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 from typing import Dict, Set
 from loguru import logger
 import math
-from config import settings
+from src.db.clickhouse_client import ch_manager
 from src.db.postgres import SessionLocal
+from src.security_master.models import Instrument
 from src.security_master.repository import InstrumentRepository
 
 class MarketDataService:
@@ -52,29 +53,57 @@ class MarketDataService:
         finally:
             db.close()
 
-    async def _resolve_default_stream_symbols(self):
-        """Map DEFAULT_STREAM_SYMBOLS env to instrument_ids in Security Master."""
+    def _register_stream_instrument(self, inst: Instrument) -> None:
+        self.always_stream.add(inst.id)
+        self.instrument_meta[inst.id] = {
+            "instrument_id": inst.id,
+            "symbol": inst.symbol,
+            "ibkr_conid": inst.ibkr_conid,
+            "exchange": inst.exchange or "SMART",
+            "currency": inst.currency or "USD",
+        }
+        self.symbol_to_id[inst.symbol.upper()] = inst.id
+
+    async def _load_autonomous_stream_catalog(self):
+        """Load active instruments from ClickHouse catalog for autonomous streaming."""
+        catalog_rows: list[dict] = []
+        try:
+            catalog_rows = ch_manager.list_active_instruments()
+            logger.info(
+                f"Loaded {len(catalog_rows)} active instrument(s) from ClickHouse catalog"
+            )
+        except Exception as e:
+            logger.error(f"Failed to load stream catalog from ClickHouse: {e}")
+
         db = SessionLocal()
         try:
             repo = InstrumentRepository(db)
-            for symbol in settings.DEFAULT_STREAM_SYMBOLS:
-                inst = repo.get_by_symbol(symbol.upper())
-                if inst and inst.ibkr_conid:
-                    self.always_stream.add(inst.id)
-                    self.instrument_meta[inst.id] = {
-                        "instrument_id": inst.id,
-                        "symbol": inst.symbol,
-                        "ibkr_conid": inst.ibkr_conid,
-                        "exchange": inst.exchange or "SMART",
-                        "currency": inst.currency or "USD",
-                    }
-                    self.symbol_to_id[inst.symbol.upper()] = inst.id
+            if not catalog_rows:
+                logger.warning(
+                    "ClickHouse catalog empty; falling back to PostgreSQL active resolved instruments"
+                )
+                for inst in repo.list_active_resolved():
+                    self._register_stream_instrument(inst)
+                return
+
+            registered = 0
+            for row in catalog_rows:
+                inst = repo.get_by_ibkr_conid(row["con_id"]) or repo.get_by_symbol(row["symbol"])
+                if inst and inst.ibkr_conid and inst.is_active:
+                    self._register_stream_instrument(inst)
+                    registered += 1
+                else:
+                    logger.warning(
+                        f"Catalog symbol {row['symbol']} (con_id={row['con_id']}) "
+                        "not found or unresolved in PostgreSQL"
+                    )
+            logger.info(f"Registered {registered} instrument(s) for autonomous streaming")
         finally:
             db.close()
 
     async def ensure_autonomous_streaming(self, force_resubscribe: bool = False):
-        """Start or restore IB subscriptions for DEFAULT_STREAM_SYMBOLS only."""
-        await self._resolve_default_stream_symbols()
+        """Start or restore IB subscriptions for all active ClickHouse catalog instruments."""
+        await self._load_autonomous_stream_catalog()
 
         if not self.ib.isConnected():
             logger.warning(

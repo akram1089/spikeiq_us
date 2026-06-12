@@ -28,6 +28,10 @@ class InstrumentRepository:
         stmt = select(Instrument).where(Instrument.symbol == symbol.upper())
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_by_ibkr_conid(self, ibkr_conid: int) -> Instrument | None:
+        stmt = select(Instrument).where(Instrument.ibkr_conid == ibkr_conid)
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def _apply_filters(self, stmt, filters: InstrumentFilters):
         if filters.is_active is not None:
             stmt = stmt.where(Instrument.is_active == filters.is_active)
