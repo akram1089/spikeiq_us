@@ -1,5 +1,6 @@
 import scripts._bootstrap  # noqa: F401
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +24,14 @@ JOBS = {
 def run_job(name: str) -> None:
     script = JOBS[name]
     logger.info(f"Scheduler starting job: {name}")
-    result = subprocess.run([PYTHON, str(script)], cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+    module = f"scripts.{script.stem}"
+    result = subprocess.run(
+        [PYTHON, "-m", module],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)},
+    )
     if result.stdout:
         logger.info(result.stdout.strip())
     if result.returncode != 0:
