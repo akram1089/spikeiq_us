@@ -1,7 +1,6 @@
 import scripts._bootstrap  # noqa: F401
 
 import asyncio
-import time
 
 from ib_insync import util
 from loguru import logger
@@ -47,7 +46,7 @@ async def resolve_batch(ib, repo: InstrumentRepository) -> tuple[int, int]:
 
 async def main_async() -> None:
     logger.info("Starting IBKR conId resolution for unresolved instruments...")
-    conn = ConnectionManager()
+    conn = ConnectionManager(client_id=settings.IB_RESOLVE_CLIENT_ID)
     connected = await conn.connect()
     if not connected:
         logger.error("Could not connect to IB Gateway")

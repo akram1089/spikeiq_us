@@ -6,11 +6,11 @@ from config import settings
 class ConnectionManager:
     """Manages the connection lifecycle to Interactive Brokers Gateway."""
     
-    def __init__(self):
+    def __init__(self, client_id: int | None = None):
         self.ib = None
         self.host = settings.IB_HOST
         self.port = settings.IB_PORT
-        self.client_id = settings.IB_CLIENT_ID
+        self.client_id = client_id if client_id is not None else settings.IB_CLIENT_ID
         
         self._reconnecting = False
         self._reconnect_task = None

@@ -27,6 +27,8 @@ IB_PORT = int(os.getenv("IB_PORT", DEFAULT_PORT))
 
 # Client ID for connection (default to 1)
 IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", 1))
+# Separate client ID for one-off resolve jobs (backend holds IB_CLIENT_ID)
+IB_RESOLVE_CLIENT_ID = int(os.getenv("IB_RESOLVE_CLIENT_ID", str(IB_CLIENT_ID + 10)))
 
 # Logging Configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

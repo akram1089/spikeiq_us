@@ -1,10 +1,11 @@
-from datetime import date
+import asyncio
 
 from fastapi import HTTPException
 from ib_insync import IB
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from config import settings
 from src.security_master.ibkr_resolver import resolve_instrument
 from src.security_master.mappers import publish_instrument_event, to_response
 from src.security_master.repository import InstrumentFilters, InstrumentRepository
@@ -156,6 +157,45 @@ class InstrumentService:
         publish_instrument_event(inst, "CREATE" if created else "UPDATE")
         resp = to_response(inst)
         return InstrumentSearchResponse(**resp.model_dump(), source="ibkr")
+
+    async def resolve_pending(self) -> dict:
+        """Resolve unresolved instruments using the backend's existing IB session."""
+        if not self.ib or not self.ib.isConnected():
+            raise HTTPException(status_code=503, detail="Not connected to IB Gateway")
+
+        total_resolved = 0
+        total_failed = 0
+        while True:
+            instruments = self.repo.list_unresolved(limit=settings.IB_RESOLVE_BATCH_SIZE)
+            if not instruments:
+                break
+
+            resolved = 0
+            failed = 0
+            for inst in instruments:
+                if inst.ibkr_conid is not None:
+                    continue
+                result = await resolve_instrument(self.ib, inst)
+                if result:
+                    self.repo.update_conid(
+                        inst,
+                        result.ibkr_conid,
+                        result.local_symbol,
+                        result.exchange,
+                        result.currency,
+                    )
+                    publish_instrument_event(inst, "UPDATE")
+                    resolved += 1
+                else:
+                    failed += 1
+                await asyncio.sleep(settings.IB_RESOLVE_RETRY_DELAY)
+
+            total_resolved += resolved
+            total_failed += failed
+            if resolved == 0 and failed == 0:
+                break
+
+        return {"resolved": total_resolved, "failed": total_failed}
 
     async def resolve_conid_if_missing(self, instrument_id: int) -> InstrumentResponse:
         inst = self.repo.get_by_id(instrument_id)

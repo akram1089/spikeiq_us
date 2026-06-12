@@ -8,11 +8,21 @@ PostgreSQL is the **source of truth** for tradable instruments. ClickHouse `inst
 
 ```bash
 # From project root with DATABASE_URL set
-python scripts/sync_indexes.py
-python scripts/sync_priority_streaming.py
-python scripts/sync_stocks.py
-python scripts/sync_futures.py
-python scripts/resolve_conids.py
+python -m scripts.sync_indexes
+python -m scripts.sync_priority_streaming
+python -m scripts.sync_stocks
+python -m scripts.sync_futures
+python -m scripts.resolve_conids
+
+# Docker (after deploy)
+docker exec quant_backend python -m scripts.sync_indexes
+docker exec quant_backend python -m scripts.sync_priority_streaming
+docker exec quant_backend python -m scripts.sync_stocks
+docker exec quant_backend python -m scripts.sync_futures
+docker exec quant_scheduler python -m scripts.resolve_conids
+
+# Preferred: reuse backend IB session (no client-id conflict)
+curl -X POST https://spikeiq.mooo.com/api/instruments/resolve-pending
 ```
 
 ## Priority autonomous streaming instruments

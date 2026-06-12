@@ -63,6 +63,14 @@ def list_instruments(
     )
 
 
+@router.post("/resolve-pending")
+async def resolve_pending_instruments(
+    service: InstrumentService = Depends(get_service),
+):
+    """Resolve IBKR conIds for catalog rows missing ibkr_conid (uses backend IB session)."""
+    return await service.resolve_pending()
+
+
 @router.get("/search", response_model=InstrumentSearchResponse)
 async def search_instrument(
     symbol: str = Query(...),
