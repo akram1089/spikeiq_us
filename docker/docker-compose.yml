@@ -110,13 +110,23 @@ services:
     restart: always
     depends_on:
       ib-gateway:
-        condition: service_healthy
+        condition: service_started
       clickhouse:
         condition: service_healthy
       postgres:
         condition: service_healthy
       kafka:
         condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://127.0.0.1:8000/api/status'', timeout=5)"',
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
     ports:
       - "8000:8000"
     environment:

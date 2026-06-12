@@ -12,6 +12,9 @@ services:
   kafka:
     ports: !reset []
 
+  postgres:
+    ports: !reset []
+
   backend:
     ports: !reset []
 
@@ -23,8 +26,10 @@ services:
     container_name: spikeiq_nginx
     restart: always
     depends_on:
-      - frontend
-      - backend
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
     ports:
       # Bind to localhost only — host nginx/Caddy proxies spikeiq.mooo.com here
       - "127.0.0.1:9080:80"
