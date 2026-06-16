@@ -71,6 +71,27 @@ sudo certbot renew --dry-run
 
 Certbot auto-renews. It updates `/etc/nginx/sites-available/spikeiq.mooo.com` with SSL and does not affect other vhosts.
 
+**Important — WebSocket / Market Stream LIVE:** After `certbot --nginx`, open the HTTPS `server { listen 443 ssl; ... }` block and confirm it includes the same WebSocket proxy headers as the HTTP block (`Upgrade`, `Connection $connection_upgrade`, `proxy_read_timeout 86400`). Without these, the dashboard shows **Market Stream OFFLINE** while ticks still ingest to ClickHouse.
+
+```bash
+sudo nginx -T | grep -A 30 "server_name spikeiq.mooo.com"
+```
+
+If the `443` block is missing upgrade headers, copy them from `deploy/host-nginx-spikeiq.mooo.com.conf` (see the HTTPS comment at the bottom), then:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Test WebSocket from the VPS:
+
+```bash
+# apt install websocat   # if needed
+websocat -v "ws://127.0.0.1:9080/api/ws/ticks?symbols=NDX"
+```
+
+You should see `{"type":"connected","symbols":["NDX"]}` and backend logs `WebSocket client connected`.
+
 ## 5. Updates
 
 ```bash

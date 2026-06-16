@@ -334,15 +334,30 @@ class MarketDataService:
         except Exception as ke:
             logger.error(f"Failed to publish tick to Kafka: {ke}")
 
+        contract = self.contracts.get(instrument_id)
+        con_id = contract.conId if contract else meta.get("ibkr_conid", 0)
+        ltp = cache.get("last") or 0.0
+        close_price = cache.get("close") or 0.0
+        change = (
+            round(((ltp - close_price) / close_price) * 100, 4)
+            if ltp and close_price
+            else 0.0
+        )
+
         msg = {
-            "instrument_id": instrument_id,
-            "symbol": symbol,
-            "last": cache.get("last"),
-            "bid": cache.get("bid"),
-            "ask": cache.get("ask"),
-            "close": cache.get("close"),
-            "volume": cache.get("volume"),
-            "timestamp": ts_str,
+            "type": "tick",
+            "data": {
+                "instrument_id": instrument_id,
+                "instrument_token": int(con_id or 0),
+                "symbol": symbol,
+                "ltp": ltp,
+                "close": close_price,
+                "change": change,
+                "bid": cache.get("bid"),
+                "ask": cache.get("ask"),
+                "volume": cache.get("volume"),
+                "ts": ts_str,
+            },
         }
 
         ws_clients = self.websockets.get(symbol, set())

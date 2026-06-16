@@ -493,11 +493,13 @@ async def websocket_ticks(websocket: WebSocket, symbols: str = "AAPL"):
     await websocket.accept()
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     logger.info(f"WebSocket client connected to ticks stream for symbols: {symbol_list}")
-    
+
     if not market_data_service:
-        await websocket.send_json({"error": "MarketDataService not initialized"})
+        await websocket.send_json({"type": "error", "message": "MarketDataService not initialized"})
         await websocket.close()
         return
+
+    await websocket.send_json({"type": "connected", "symbols": symbol_list})
         
     for sym in symbol_list:
         market_data_service.register_websocket(sym, websocket)
