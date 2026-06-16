@@ -15,7 +15,12 @@ import { playAlertSound } from './utils/browserNotify'
 import { X } from 'lucide-react'
 
 export default function App() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, token } = useAuth()
+  const restUrl =
+    import.meta.env.DEV &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'http://localhost:8000/api'
+      : '/api'
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebar-collapsed') === 'true'
@@ -149,7 +154,7 @@ export default function App() {
               path="/instruments"
               element={
                 <ProtectedRoute>
-                  <InstrumentsCatalog />
+                  <InstrumentsCatalog restUrl={restUrl} token={token} />
                 </ProtectedRoute>
               }
             />
