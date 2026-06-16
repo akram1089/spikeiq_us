@@ -50,24 +50,24 @@ function computeBollingerBands(candles, period = 20, stdDevMultiplier = 2) {
   return { upper, middle, lower }
 }
 
-/** Format volume in Indian notation. */
+/** Format volume in US notation. */
 function fmtVol(v) {
-  if (v >= 1e7) return (v / 1e7).toFixed(2) + ' Cr'
-  if (v >= 1e5) return (v / 1e5).toFixed(2) + ' L'
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
   if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K'
   return String(v)
 }
 
-/** Format price in INR. */
+/** Format price in USD. */
 function fmtPrice(p) {
-  return '₹' + Number(p).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return '$' + Number(p).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-/** Convert a UTC unix timestamp to IST display string. */
-function toIST(ts) {
+/** Convert a UTC unix timestamp to ET display string. */
+function toET(ts) {
   const d = new Date(ts * 1000)
-  return d.toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   })
@@ -162,21 +162,24 @@ export default function CandlestickChart({ data = EMPTY_ARRAY, height = 480, sym
         fixRightEdge: false,
         tickMarkFormatter: (time, tickMarkType) => {
           const d = new Date(time * 1000)
-          const ist = new Date(d.getTime() + 5.5 * 3600 * 1000)
-          const h = ist.getUTCHours()
-          const m = ist.getUTCMinutes().toString().padStart(2, '0')
-          const day = ist.getUTCDate()
-          const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getUTCMonth()]
-          const yr = ist.getUTCFullYear()
-          if (tickMarkType <= 1) return `${mon} '${String(yr).slice(2)}`
-          if (tickMarkType === 2) return `${day} ${mon}`
-          if (h === 9 && m === '15') return `${day} ${mon}\n09:15 IST`
+          const etStr = d.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+            day: 'numeric', month: 'short', year: '2-digit',
+          })
+          const parts = etStr.split(', ')
+          const timePart = parts[parts.length - 1] || ''
+          const datePart = parts.slice(0, -1).join(', ')
+          const [h, m] = timePart.split(':')
+          if (tickMarkType <= 1) return datePart.split(' ').slice(0, 2).join(' ')
+          if (tickMarkType === 2) return datePart
+          if (h === '09' && m === '30') return `${datePart}\n09:30 ET`
           return `${h}:${m}`
         },
       },
       localization: {
         priceFormatter: fmtPrice,
-        timeFormatter: (time) => toIST(time) + ' IST',
+        timeFormatter: (time) => toET(time) + ' ET',
       },
     })
 
@@ -867,7 +870,7 @@ export default function CandlestickChart({ data = EMPTY_ARRAY, height = 480, sym
             </span>
             {ohlcInfo.time && (
               <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                {toIST(ohlcInfo.time)} IST
+                {toET(ohlcInfo.time)} ET
               </span>
             )}
           </div>

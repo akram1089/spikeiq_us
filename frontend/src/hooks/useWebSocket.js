@@ -30,7 +30,7 @@ export function useWebSocket(url, onMessageCallback) {
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsUrl = (url == null || url === undefined)
-        ? `${protocol}//${window.location.host}/ws/market`
+        ? `${protocol}//${window.location.host}/api/ws/ticks?symbols=SPX,AAPL,TSLA,NVDA,/ES`
         : url
       wsRef.current = new WebSocket(wsUrl)
 

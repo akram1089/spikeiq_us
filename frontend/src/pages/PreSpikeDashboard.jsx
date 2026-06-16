@@ -662,7 +662,7 @@ export default function PreSpikeDashboard() {
                       <td style={{ fontWeight: '800' }}>{item.symbol}</td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: '700', color: 'var(--text-primary)' }}>
                         {item.price !== undefined && item.price !== null && item.price !== 0
-                          ? `₹${formatNumber(item.price, 2)}`
+                          ? `$${formatNumber(item.price, 2)}`
                           : <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>---</span>}
                       </td>
                       <td>
@@ -822,7 +822,7 @@ export default function PreSpikeDashboard() {
                         <td style={{ fontWeight: '800' }}>{item.symbol}</td>
                         <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: '700', color: 'var(--text-primary)' }}>
                           {item.price !== undefined && item.price !== null && item.price !== 0
-                            ? `₹${formatNumber(item.price, 2)}`
+                            ? `$${formatNumber(item.price, 2)}`
                             : <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>---</span>}
                         </td>
                         <td>

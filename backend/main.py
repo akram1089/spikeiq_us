@@ -8,7 +8,7 @@ import json
 import math
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
@@ -30,7 +30,7 @@ from src.queue.kafka_producer import kafka_producer
 from src.workers.subscription_worker import SubscriptionWorker
 from src.workers.tick_ingestion_worker import TickIngestionWorker
 from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
-from src.auth.router import router as auth_router
+from src.auth.router import router as auth_router, get_current_user
 from src.market.router import router as market_router
 from src.market.analytics_router import router as analytics_router
 from src.security_master.router import router as instruments_router, set_ib_instance as set_instruments_ib
@@ -52,6 +52,16 @@ hist_service: HistoricalDataService = None
 market_data_service: MarketDataService = None
 sub_worker: SubscriptionWorker = None
 tick_worker: TickIngestionWorker = None
+
+_status_cache: dict = {}
+_status_cache_ts: float = 0.0
+_STATUS_CACHE_TTL = 30.0
+
+
+def _ws_client_count() -> int:
+    if not market_data_service:
+        return 0
+    return sum(len(s) for s in market_data_service.websockets.values())
 sm_sync_worker: SecurityMasterSyncWorker = None
 
 @asynccontextmanager
@@ -202,6 +212,60 @@ async def get_today_ticks_count():
     except Exception as e:
         logger.error(f"Error fetching today ticks count: {e}")
         return {"count": 0, "error": str(e)}
+
+
+@app.get("/api/market/ticker/status")
+async def ticker_status(user: dict = Depends(get_current_user)):
+    """Navbar status: IB connection, streaming engine, WS clients, today ticks."""
+    import time as _time
+    global _status_cache, _status_cache_ts
+
+    ib_connected = bool(conn and conn.ib and conn.ib.isConnected())
+    now_ts = _time.monotonic()
+    if now_ts - _status_cache_ts > _STATUS_CACHE_TTL or not _status_cache:
+        try:
+            client = ch_manager.get_client()
+            result = client.query(
+                f"""
+                SELECT count() AS cnt
+                FROM {settings.CLICKHOUSE_DB}.raw_ticks
+                WHERE toDate(ts, 'America/New_York') = toDate(now('America/New_York'))
+                """
+            )
+            today_ticks = int(result.result_rows[0][0]) if result.result_rows else 0
+            _status_cache = {"today_ticks": today_ticks, "today_alerts": 0}
+            _status_cache_ts = now_ts
+        except Exception as e:
+            logger.warning(f"ticker_status cache refresh failed: {e}")
+
+    running = bool(market_data_service and market_data_service.active)
+    return {
+        "running": running,
+        "kite_authenticated": ib_connected,
+        "ib_connected": ib_connected,
+        "active_interval": 60,
+        "ws_clients": _ws_client_count(),
+        "today_alerts": _status_cache.get("today_alerts", 0),
+        "today_ticks": _status_cache.get("today_ticks", 0),
+    }
+
+
+@app.post("/api/market/ticker/start")
+async def start_ticker(user: dict = Depends(get_current_user)):
+    if not conn or not conn.ib.isConnected():
+        raise HTTPException(status_code=400, detail="IB Gateway not connected")
+    if not market_data_service:
+        raise HTTPException(status_code=503, detail="Market data service unavailable")
+    await market_data_service.ensure_autonomous_streaming(force_resubscribe=True)
+    return {"message": "Ticker stream started", "running": True}
+
+
+@app.post("/api/market/ticker/stop")
+async def stop_ticker(user: dict = Depends(get_current_user)):
+    if market_data_service:
+        market_data_service.stop()
+    return {"message": "Ticker stream stopped", "running": False}
+
 
 @app.get("/api/health")
 async def health_check():

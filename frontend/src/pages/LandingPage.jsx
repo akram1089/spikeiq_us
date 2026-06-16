@@ -68,7 +68,7 @@ const FEATURES = [
     benefits: ['Drag-and-drop alert builder', 'Price/volume/% conditions', 'WhatsApp & push delivery'],
     mock: () => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {[['NIFTY > 22500', 'Active', 'up'], ['GOLD < 70000', 'Triggered', 'dn'], ['RELIANCE % > 2', 'Active', 'up']].map(([c, s, t]) => (
+        {[['SPX > 5800', 'Active', 'up'], ['TSLA % > 2', 'Triggered', 'dn'], ['/ES < 5850', 'Active', 'up']].map(([c, s, t]) => (
           <div key={c} className="mock-row">
             <span style={{ fontSize: '0.78rem', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{c}</span>
             <span className={`mock-tag ${t === 'up' ? 'up' : 'dn'}`}>{s}</span>
@@ -83,7 +83,7 @@ const FEATURES = [
     benefits: ['Sub-second trigger latency', 'Tick-level precision', 'Parallel multi-instrument scanning'],
     mock: () => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {[['12:04:01.342', 'BANKNIFTY', '+0.82%'], ['12:04:00.198', 'NIFTY', '+0.54%'], ['12:03:58.901', 'CRUDEOIL', '-1.12%']].map(([t, s, c]) => (
+        {[['09:30:01.342', 'TSLA', '+0.82%'], ['09:30:00.198', 'SPX', '+0.54%'], ['09:29:58.901', '/NQ', '-0.42%']].map(([t, s, c]) => (
           <div key={t} className="mock-row">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>{t}</span>
             <span className="mock-val">{s}</span>
@@ -102,7 +102,7 @@ const FEATURES = [
         <div className="mock-row" style={{ background: 'var(--bg-primary)' }}>
           {['Time', 'Price', 'Volume', 'Change'].map(h => <span key={h} style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>{h}</span>)}
         </div>
-        {[['12:04:01', '22,458', '12,430', '+0.12%'], ['12:04:00', '22,432', '9,821', '-0.04%'], ['12:03:59', '22,441', '7,650', '+0.08%']].map(([t, p, v, c]) => (
+        {[['09:30:01', '5,842', '1.2M', '+0.12%'], ['09:30:00', '5,835', '890K', '-0.04%'], ['09:29:59', '5,838', '720K', '+0.08%']].map(([t, p, v, c]) => (
           <div key={t} className="mock-row">
             <span className="mock-label">{t}</span>
             <span className="mock-val">{p}</span>
@@ -129,7 +129,7 @@ const FEATURES = [
           <polygon points="0,70 40,55 80,60 120,35 160,40 200,20 220,25 220,80 0,80" fill="rgba(59,130,246,0.08)" />
         </svg>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-          {['O: 22,310','H: 22,510','L: 22,290','C: 22,458'].map(v => (
+          {['O: 5,810', 'H: 5,850', 'L: 5,805', 'C: 5,842'].map(v => (
             <span key={v} style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{v}</span>
           ))}
         </div>
@@ -137,12 +137,27 @@ const FEATURES = [
     ),
   },
   {
-    icon: '🗄️', color: '#f97316', name: 'Data ETL',
-    desc: 'Bulk ingest millions of historical ticks in seconds with concurrent chunk processing and smart deduplication.',
-    benefits: ['Concurrent multi-chunk ingestion', '1-second interval tick support', 'Live progress tracking'],
+    icon: '🎯', color: '#8b5cf6', name: 'Pre-Spike Alerts',
+    desc: 'Early warning system that flags instruments building momentum before a spike — powered by ClickHouse analytics.',
+    benefits: ['Pre-spike candidate scoring', 'Multi-timeframe watchlist', 'Actionable buy/sell signals'],
+    mock: () => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[['TSLA', 'Building', 'up'], ['NVDA', 'Watch', 'up'], ['/ES', 'Cooling', 'dn']].map(([s, st, t]) => (
+          <div key={s} className="mock-row">
+            <span className="mock-val">{s}</span>
+            <span className={`mock-tag ${t === 'up' ? 'up' : 'dn'}`}>{st}</span>
+          </div>
+        ))}
+      </div>
+    ),
+  },
+  {
+    icon: '🗄️', color: '#f97316', name: 'Tick Pipeline',
+    desc: 'High-throughput tick ingestion from Interactive Brokers into ClickHouse with Kafka buffering and deduplication.',
+    benefits: ['Sub-second tick capture', 'ET timezone partitioning', 'Live progress monitoring'],
     mock: () => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {[['NIFTY 50 — 2023', 85, 'var(--accent-primary)'], ['BANKNIFTY — 2023', 62, 'var(--accent-primary)'], ['GOLD MCX — Q4', 100, '#10b981']].map(([n, p, c]) => (
+        {[['SPX — Today', 92, 'var(--accent-primary)'], ['AAPL — Today', 78, 'var(--accent-primary)'], ['/ES — Today', 100, '#10b981']].map(([n, p, c]) => (
           <div key={n}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
               <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{n}</span>
@@ -155,36 +170,15 @@ const FEATURES = [
     ),
   },
   {
-    icon: '🧮', color: 'var(--accent-primary)', name: 'Option Chain',
-    desc: 'Institutional-grade options analytics: Greeks, IV surface, PCR, Max Pain, GEX and OI heatmaps.',
-    benefits: ['Live Greeks (Δ Γ Θ V)', 'IV skew & PCR analytics', 'GEX & Max Pain levels'],
-    mock: () => (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div className="mock-row" style={{ background: 'var(--bg-primary)' }}>
-          {['Strike', 'CE OI', 'IV', 'Delta', 'PE OI'].map(h => <span key={h} style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700 }}>{h}</span>)}
-        </div>
-        {[['22400', '1.2M', '18.4%', '0.54', '0.8M'], ['22450', '2.1M', '17.9%', '0.49', '1.4M'], ['22500', '3.4M', '19.2%', '0.44', '2.8M']].map(([s, co, iv, d, po]) => (
-          <div key={s} className="mock-row">
-            <span className="mock-val" style={{ color: 'var(--accent-primary)' }}>{s}</span>
-            <span className="mock-label">{co}</span>
-            <span className="mock-label">{iv}</span>
-            <span className="mock-label">{d}</span>
-            <span className="mock-label">{po}</span>
-          </div>
-        ))}
-      </div>
-    ),
-  },
-  {
-    icon: '🏅', color: '#eab308', name: 'MCX Commodity',
-    desc: 'Real-time MCX commodity tracking: Gold, Silver, Crude Oil, Natural Gas and Copper with full analytics.',
-    benefits: ['Live MCX price streaming', 'Full OHLC + Open Interest', 'Commodity spike alerts'],
+    icon: '🏅', color: '#eab308', name: 'US Futures',
+    desc: 'Real-time CME futures tracking: /ES, /NQ, /YM, /CL and more with full analytics and spike detection.',
+    benefits: ['Live futures price streaming', 'Full OHLC + volume', 'Futures spike alerts'],
     mock: () => (
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        {[['GOLD', '71,245', '+0.65%', true], ['SILVER', '85,320', '+1.12%', true], ['CRUDEOIL', '6,834', '+2.11%', true], ['NATGAS', '198.4', '-0.87%', false]].map(([s, p, c, up]) => (
+        {[['/ES', '5,841', '+0.82%', true], ['/NQ', '20,456', '+1.12%', true], ['/CL', '78.42', '+1.45%', true], ['/YM', '42,180', '-0.32%', false]].map(([s, p, c, up]) => (
           <div key={s} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '10px 12px' }}>
             <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 4 }}>{s}</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: '0.95rem' }}>₹{p}</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: '0.95rem' }}>${p}</div>
             <div className={`mock-tag ${up ? 'up' : 'dn'}`} style={{ marginTop: 4, display: 'inline-block' }}>{c}</div>
           </div>
         ))}
@@ -196,7 +190,7 @@ const FEATURES = [
 const WHY = [
   { icon: <Zap size={24} />, color: '#f97316', title: 'Lightning Fast', desc: 'Sub-5ms WebSocket tick delivery powered by Interactive Brokers and ClickHouse time-series DB.' },
   { icon: <Shield size={24} />, color: 'var(--accent-primary)', title: 'Enterprise Secure', desc: 'JWT auth, Docker isolation, encrypted credentials and role-based admin access.' },
-  { icon: <BarChart2 size={24} />, color: 'var(--accent-primary)', title: 'Professional Grade', desc: 'Institutional-level analytics: Greeks, GEX, IV surfaces and Max Pain — beyond retail terminals.' },
+  { icon: <BarChart2 size={24} />, color: 'var(--accent-primary)', title: 'Professional Grade', desc: 'Institutional-level spike analytics, pre-spike scoring, and multi-timeframe dashboards — beyond retail terminals.' },
   { icon: <Globe size={24} />, color: '#06b6d4', title: 'All Markets', desc: 'US equities, ETFs, indices, and CME futures — one unified terminal.' },
 ]
 
@@ -284,17 +278,17 @@ export default function LandingPage({ theme, setTheme }) {
                 <span className="status-badge online"><span className="status-dot" />Live</span>
               </div>
               <div className="hero-price-grid">
-                {[['NIFTY 50', '22,458', '+1.24%', true], ['BANKNIFTY', '48,120', '+0.87%', true],
-                  ['GOLD', '71,245', '-0.32%', false], ['CRUDEOIL', '6,834', '+2.11%', true]].map(([s, p, c, up]) => (
+                {[['SPX', '5,842', '+0.84%', true], ['/ES', '5,841', '+0.82%', true],
+                  ['TSLA', '342', '-0.32%', false], ['NVDA', '875', '+1.56%', true]].map(([s, p, c, up]) => (
                   <div key={s} className={`hero-price-item ${up ? 'up' : 'dn'}`}>
                     <div className="hpi-symbol">{s}</div>
-                    <div className="hpi-price">₹{p}</div>
+                    <div className="hpi-price">${p}</div>
                     <div className={`hpi-change ${up ? 'up' : 'dn'}`}>{c}</div>
                   </div>
                 ))}
               </div>
               <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--green-bg)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10 }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--green)', fontWeight: 600 }}>⚡ BANKNIFTY spike +1.8% detected in 2.3s</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--green)', fontWeight: 600 }}>⚡ TSLA spike +2.4% detected in 1.8s</span>
               </div>
             </div>
           </div>
@@ -307,7 +301,7 @@ export default function LandingPage({ theme, setTheme }) {
           {tickerItems.map((t, i) => (
             <span key={i} className="ticker-item">
               <span className="ticker-symbol">{t.symbol}</span>
-              <span className="ticker-price">₹{t.price}</span>
+              <span className="ticker-price">${t.price}</span>
               <span className={`ticker-change ${t.up ? 'up' : 'dn'}`}>{t.change}</span>
               <span className="ticker-sep">|</span>
             </span>
@@ -320,7 +314,7 @@ export default function LandingPage({ theme, setTheme }) {
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div className="section-label"><Zap size={14} /> Platform Features</div>
           <h2 className="section-title">Everything You Need to<br /><span className="hero-title-gradient">Trade Smarter</span></h2>
-          <p className="section-sub">10 powerful modules covering live data, alerts, options analytics and historical research — all in one terminal.</p>
+          <p className="section-sub">9 powerful modules covering live US equities, futures, alerts, and historical research — all in one terminal.</p>
           <div className="features-grid">
             {FEATURES.map((f) => (
               <div key={f.name} className="feature-card">
@@ -408,12 +402,12 @@ export default function LandingPage({ theme, setTheme }) {
                 <div className="landing-nav-logo-icon"><Activity size={18} color="white" /></div>
                 SpikeIQ
               </a>
-              <p>Institutional-grade market intelligence terminal for Indian stock & commodity markets. Real-time data, professional analytics.</p>
+              <p>Institutional-grade market intelligence terminal for US equities, ETFs, indices, and CME futures. Real-time data, professional analytics.</p>
             </div>
             <div>
               <div className="footer-col-title">Platform</div>
               <ul className="footer-links">
-                {[['Dashboard', '/login'], ['Alerts', '/login'], ['Option Chain', '/login'], ['Commodity', '/login'], ['Data ETL', '/login']].map(([l, h]) => (
+                {[['Dashboard', '/login'], ['Pre-Spike', '/login'], ['Instruments', '/login'], ['Price Spikes', '/login']].map(([l, h]) => (
                   <li key={l}><Link to={h}>{l}</Link></li>
                 ))}
               </ul>
@@ -421,7 +415,7 @@ export default function LandingPage({ theme, setTheme }) {
             <div>
               <div className="footer-col-title">Features</div>
               <ul className="footer-links">
-                {['Live Dashboard', 'Price Spikes', 'HF Alerts', 'Option Chain', 'MCX Commodity', 'Historical Data'].map((f) => (
+                {['Live Dashboard', 'Price Spikes', 'Pre-Spike', 'Instruments', 'US Futures', 'Historical Data'].map((f) => (
                   <li key={f}><a href="#features">{f}</a></li>
                 ))}
               </ul>

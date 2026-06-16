@@ -9,6 +9,11 @@ export const login = (username, password) =>
   client.post('/auth/login', { username, password })
 export const getMe = () => client.get('/auth/me')
 
+// ── Ticker / navbar status (IB Gateway) ──
+export const getTickerStatus = () => client.get('/market/ticker/status')
+export const startTicker = () => client.post('/market/ticker/start')
+export const stopTicker = () => client.post('/market/ticker/stop')
+
 // ── Market analytics ──
 export const getSummary = () => client.get('/market/summary')
 export const getDashboardAnalytics = ({
