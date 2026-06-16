@@ -32,6 +32,7 @@ from src.workers.tick_ingestion_worker import TickIngestionWorker
 from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
 from src.auth.router import router as auth_router
 from src.market.router import router as market_router
+from src.market.analytics_router import router as analytics_router
 from src.security_master.router import router as instruments_router, set_ib_instance as set_instruments_ib
 from src.subscriptions.router import (
     router as subscriptions_router,
@@ -175,6 +176,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(market_router)
+app.include_router(analytics_router)
 app.include_router(instruments_router)
 app.include_router(subscriptions_router)
 

@@ -14,10 +14,14 @@
     "@emotion/styled": "^11.14.0",
     "@mui/material": "^6.4.0",
     "@mui/x-data-grid": "^7.24.0",
+    "axios": "^1.7.2",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "react-hot-toast": "^2.4.1",
+    "react-router-dom": "^6.23.1",
+    "recharts": "^2.12.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

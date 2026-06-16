@@ -87,3 +87,7 @@ async def login(req: AuthRequest):
     except Exception as e:
         logger.error(f"Error in login: {e}")
         raise HTTPException(status_code=500, detail="Internal server database error")
+
+@router.get("/me")
+async def me(user: dict = Depends(get_current_user)):
+    return {"username": user["sub"]}
