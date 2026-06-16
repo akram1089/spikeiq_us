@@ -37,7 +37,7 @@ class TickIngestionWorker(threading.Thread):
             self.running = False
             return
 
-        db_client = ch_manager.get_client()
+        db_client = ch_manager.create_worker_client()
 
         while self.running:
             if self.paused:

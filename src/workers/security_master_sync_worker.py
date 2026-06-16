@@ -39,6 +39,8 @@ class SecurityMasterSyncWorker(threading.Thread):
             self.running = False
             return
 
+        self._db_client = ch_manager.create_worker_client()
+
         while self.running:
             try:
                 msg = self.consumer.poll(timeout=1.0)
@@ -70,7 +72,7 @@ class SecurityMasterSyncWorker(threading.Thread):
         sec_type = ASSET_TYPE_TO_SEC_TYPE.get(asset_type, "STK")
         is_active = 1 if payload.get("is_active", True) else 0
 
-        client = ch_manager.get_client()
+        client = self._db_client
         client.insert(
             "instruments",
             [[

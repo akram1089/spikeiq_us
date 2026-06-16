@@ -29,7 +29,7 @@ class ClickHouseManager:
         self.client = None
 
     def get_client(self, select_db=True, force_reconnect=False):
-        """Returns a connected clickhouse_connect client, retrying if necessary."""
+        """Returns the shared clickhouse_connect client for the API/main thread."""
         if force_reconnect:
             self.client = None
 
@@ -41,8 +41,21 @@ class ClickHouseManager:
                 logger.warning("Existing ClickHouse client connection lost, reconnecting...")
                 self.client = None
 
+        client = self._new_client(select_db=select_db)
+        self.client = client
+        return client
+
+    def create_worker_client(self, select_db=True):
+        """Dedicated client for background worker threads (not shared with the API)."""
         db = self.database if select_db else None
-        retries = 10
+        client = self._new_client(select_db=select_db)
+        logger.success(
+            f"Worker ClickHouse client connected at {self.host}:{self.port} (database: {db})"
+        )
+        return client
+
+    def _new_client(self, select_db=True, retries=10):
+        db = self.database if select_db else None
         for i in range(retries):
             try:
                 client = clickhouse_connect.get_client(
@@ -50,15 +63,14 @@ class ClickHouseManager:
                     port=self.port,
                     username=self.user,
                     password=self.password,
-                    database=db
+                    database=db,
                 )
-                self.client = client
                 logger.success(f"Connected to ClickHouse at {self.host}:{self.port} (database: {db})")
                 return client
             except Exception as e:
                 logger.warning(f"Failed to connect to ClickHouse (attempt {i+1}/{retries}): {e}")
                 time.sleep(2)
-        
+
         raise ConnectionError(f"Could not connect to ClickHouse at {self.host}:{self.port}")
 
     def initialize_schema(self):
@@ -239,10 +251,11 @@ class ClickHouseManager:
         currency: str,
         name: str,
         is_active: bool = True,
+        client=None,
     ) -> None:
         """Insert or update a row in the streaming instruments catalog."""
-        client = self.get_client()
-        client.insert(
+        ch = client or self.get_client()
+        ch.insert(
             "instruments",
             [[
                 int(con_id),
@@ -260,7 +273,7 @@ class ClickHouseManager:
             f"(con_id={con_id}, is_active={is_active})"
         )
 
-    def upsert_catalog_from_instrument(self, inst) -> None:
+    def upsert_catalog_from_instrument(self, inst, client=None) -> None:
         """Upsert from a PostgreSQL Security Master Instrument ORM row."""
         if not inst or not inst.ibkr_conid:
             return
@@ -275,12 +288,13 @@ class ClickHouseManager:
             currency=inst.currency or "USD",
             name=inst.name or inst.symbol,
             is_active=bool(inst.is_active),
+            client=client,
         )
 
-    def deactivate_catalog_instrument(self, con_id: int) -> None:
+    def deactivate_catalog_instrument(self, con_id: int, client=None) -> None:
         """Mark an instrument inactive in the streaming catalog."""
-        client = self.get_client()
-        rows = client.query(
+        ch = client or self.get_client()
+        rows = ch.query(
             f"""
             SELECT symbol, exchange, sec_type, currency, name
             FROM {self.database}.instruments FINAL
@@ -299,6 +313,7 @@ class ClickHouseManager:
                 currency=str(currency or "USD"),
                 name=str(name or symbol),
                 is_active=False,
+                client=client,
             )
 
 # Global instance

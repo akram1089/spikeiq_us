@@ -36,7 +36,7 @@ class SubscriptionWorker(threading.Thread):
             self.running = False
             return
 
-        db_client = ch_manager.get_client()
+        db_client = ch_manager.create_worker_client()
 
         while self.running:
             try:
@@ -76,7 +76,7 @@ class SubscriptionWorker(threading.Thread):
                         try:
                             inst = InstrumentRepository(db).get_by_id(instrument_id)
                             if inst:
-                                ch_manager.upsert_catalog_from_instrument(inst)
+                                ch_manager.upsert_catalog_from_instrument(inst, client=db_client)
                         finally:
                             db.close()
                     if instrument_id:
@@ -84,7 +84,7 @@ class SubscriptionWorker(threading.Thread):
                     elif symbol:
                         self.market_data_service.request_streaming_by_symbol(symbol)
                 elif action == "UNSUBSCRIBE" and con_id:
-                    ch_manager.deactivate_catalog_instrument(con_id)
+                    ch_manager.deactivate_catalog_instrument(con_id, client=db_client)
 
             except Exception as e:
                 logger.error(f"Error processing subscription message: {e}")
