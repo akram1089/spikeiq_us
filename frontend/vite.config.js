@@ -15,4 +15,9 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    host: true,
+    port: 5173,
+    allowedHosts: ['spikeiq.mooo.com', 'localhost'],
+  },
 })
