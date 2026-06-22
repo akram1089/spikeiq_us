@@ -1,6 +1,6 @@
 import toast from 'react-hot-toast'
 import { X } from 'lucide-react'
-import { getPreSpikeAlertDisplay, notifyPreSpikeAlert } from '../utils/browserNotify'
+import { getPreSpikeAlertDisplay, notifyPreSpikeAlert } from './browserNotify'
 
 const STATUS_COLORS = {
   HOT: { accent: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)' },
