@@ -49,7 +49,7 @@ function getSymbolType(symbol) {
   if (!symbol) return 'STOCK'
   const sym = symbol.toUpperCase().trim()
   if (sym.startsWith('/')) return 'FUTURES'
-  if (['SPX', 'NDX', 'DJI', 'VIX', 'RUT'].includes(sym)) return 'INDEX'
+  if (['SPX', 'NDX', 'DJI', 'INDU', 'VIX', 'RUT'].includes(sym)) return 'INDEX'
   return 'STOCK'
 }
 

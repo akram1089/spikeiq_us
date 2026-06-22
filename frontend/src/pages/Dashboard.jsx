@@ -323,16 +323,16 @@ export default function Dashboard({ latestTicks, alerts: wsAlerts, isConnected }
   }
 
   const indexes = [
-    getIndexData('SPX', 3182352),
+    getIndexData('SPX', 416904),
     getIndexData('NDX', 416843),
-    getIndexData('DJI', 18053702)
+    getIndexData('INDU', 1935181)
   ]
 
   // Known index symbol names (from the index bar tokens)
   const isIndexSymbol = (sym) => {
     if (!sym) return false
     const u = sym.toUpperCase()
-    return u === 'SPX' || u === 'NDX' || u === 'DJI' || u === 'VIX' || u.startsWith('/')
+    return u === 'SPX' || u === 'NDX' || u === 'INDU' || u === 'DJI' || u === 'VIX' || u.startsWith('/')
   }
 
   // Get unique symbols from backend response (already filtered by timeframe)

@@ -10,7 +10,7 @@ INDEXES = [
     ("SPX", "S&P 500 Index", "CBOE"),
     ("NDX", "NASDAQ 100 Index", "NASDAQ"),
     ("COMP", "NASDAQ Composite Index", "NASDAQ"),
-    ("DJI", "Dow Jones Industrial Average", "CBOE"),
+    ("INDU", "Dow Jones Industrial Average", "CME"),
     ("RUT", "Russell 2000 Index", "CBOE"),
     ("VIX", "CBOE Volatility Index", "CBOE"),
     ("OEX", "S&P 100", "CBOE"),

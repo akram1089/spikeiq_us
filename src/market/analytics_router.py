@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import date as date_cls, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -319,10 +320,7 @@ async def get_pre_spike_dashboard(
 
         # Classify symbol type in ClickHouse
         is_index_sql = (
-            "(upper(symbol) LIKE '%NIFTY%' OR upper(symbol) LIKE '%BANKNIFTY%' OR "
-            "upper(symbol) LIKE '%SENSEX%' OR upper(symbol) LIKE '%BSESN%' OR "
-            "upper(symbol) LIKE '%MIDCP%' OR upper(symbol) LIKE '%FINNIFTY%' OR "
-            "upper(symbol) LIKE '%VIX%')"
+            "(upper(symbol) IN ('SPX', 'NDX', 'COMP', 'DJI', 'RUT', 'VIX') OR upper(symbol) LIKE '%INDEX%')"
         )
         sym_type = symbol_type.upper().strip()
         if sym_type == "INDEX":
@@ -966,9 +964,9 @@ async def get_dashboard_summary(user: dict = Depends(get_current_user)):
                 argMax(ltp, ts) AS ltp,
                 argMax(close, ts) AS close,
                 argMax(change, ts) AS change,
-                max(ts) AS ts
+                max(ts) AS max_ts
             FROM {db}.raw_ticks
-            WHERE ts >= now() - INTERVAL 1 DAY
+            WHERE raw_ticks.ts >= now() - INTERVAL 1 DAY
             GROUP BY instrument_token
             ORDER BY symbol
             LIMIT 50
@@ -980,7 +978,7 @@ async def get_dashboard_summary(user: dict = Depends(get_current_user)):
             change = float(r.get("change") or 0)
             if change == 0 and close > 0:
                 change = ((ltp - close) / close) * 100
-            ts_val = r.get("ts")
+            ts_val = r.get("max_ts")
             live_instruments.append({
                 "instrument_token": int(r.get("instrument_token") or 0),
                 "symbol": r.get("symbol") or "",

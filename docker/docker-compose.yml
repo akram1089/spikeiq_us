@@ -150,6 +150,7 @@ services:
       - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-trade_analytics}:${POSTGRES_PASSWORD:-trade_analytics_pass}@postgres:5432/${POSTGRES_DB:-security_master}
       - DEFAULT_STREAM_SYMBOLS=${DEFAULT_STREAM_SYMBOLS:-AAPL,MSFT,NVDA,TSLA,SPX,NDX,SPCX,META,GOOGL,AMZN}
       - IB_RESOLVE_CLIENT_ID=${IB_RESOLVE_CLIENT_ID:-12}
+      - PYTHONUNBUFFERED=1
     logging:
       driver: "json-file"
       options:
@@ -197,6 +198,7 @@ services:
       - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-trade_analytics}:${POSTGRES_PASSWORD:-trade_analytics_pass}@postgres:5432/${POSTGRES_DB:-security_master}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - IB_CLIENT_ID=${IB_RESOLVE_CLIENT_ID:-12}
+      - PYTHONUNBUFFERED=1
 
 volumes:
   tws_settings:

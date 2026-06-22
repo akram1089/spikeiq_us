@@ -45,16 +45,16 @@ async def register(req: AuthRequest):
         if existing.result_rows:
             raise HTTPException(status_code=400, detail="Username already exists")
         
-        # Hash and store
+        # Hash and store (new users are not admin by default)
         pwd_hash = jwt_handler.hash_password(req.password)
         client.insert(
             USERS_TABLE,
-            [[username, pwd_hash]],
-            column_names=["username", "password_hash"]
+            [[username, pwd_hash, 1, 0]],
+            column_names=["username", "password_hash", "is_active", "is_admin"]
         )
         
-        token = jwt_handler.create_access_token({"sub": username})
-        return {"access_token": token, "token_type": "bearer", "username": username}
+        token = jwt_handler.create_access_token({"sub": username, "is_admin": False})
+        return {"access_token": token, "token_type": "bearer", "username": username, "is_admin": False}
     except HTTPException:
         raise
     except Exception as e:
@@ -67,7 +67,7 @@ async def login(req: AuthRequest):
     client = ch_manager.get_client()
     try:
         res = client.query(
-            f"SELECT username, password_hash FROM {USERS_TABLE} WHERE lower(username) = lower(%(u)s) LIMIT 1",
+            f"SELECT username, password_hash, is_admin FROM {USERS_TABLE} WHERE lower(username) = lower(%(u)s) LIMIT 1",
             parameters={"u": username}
         )
         if not res.result_rows:
@@ -76,12 +76,13 @@ async def login(req: AuthRequest):
         user_row = res.result_rows[0]
         canonical_username = user_row[0]
         stored_hash = user_row[1]
+        is_admin = bool(user_row[2])
         
         if not jwt_handler.verify_password(req.password, stored_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        token = jwt_handler.create_access_token({"sub": canonical_username})
-        return {"access_token": token, "token_type": "bearer", "username": canonical_username}
+        token = jwt_handler.create_access_token({"sub": canonical_username, "is_admin": is_admin})
+        return {"access_token": token, "token_type": "bearer", "username": canonical_username, "is_admin": is_admin}
     except HTTPException:
         raise
     except Exception as e:
@@ -90,4 +91,4 @@ async def login(req: AuthRequest):
 
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"username": user["sub"]}
+    return {"username": user["sub"], "is_admin": user.get("is_admin", False)}

@@ -119,9 +119,9 @@ class ClickHouseManager:
         ).result_rows[0][0]
         if instrument_count == 0:
             default_instruments = [
-                (3182352, "SPX", "CBOE", "IND", "USD", "S&P 500 Index"),
+                (416904, "SPX", "CBOE", "IND", "USD", "S&P 500 Index"),
                 (416843, "NDX", "NASDAQ", "IND", "USD", "NASDAQ 100 Index"),
-                (18053702, "DJI", "CBOE", "IND", "USD", "Dow Jones Industrial Average"),
+                (1935181, "INDU", "CME", "IND", "USD", "Dow Jones Industrial Average"),
                 (265598, "AAPL", "SMART", "STK", "USD", "Apple Inc."),
                 (4815758, "NVDA", "SMART", "STK", "USD", "NVIDIA Corporation"),
                 (272093, "MSFT", "SMART", "STK", "USD", "Microsoft Corporation"),

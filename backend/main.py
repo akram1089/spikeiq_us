@@ -252,10 +252,18 @@ async def ticker_status(user: dict = Depends(get_current_user)):
 
 @app.post("/api/market/ticker/start")
 async def start_ticker(user: dict = Depends(get_current_user)):
-    if not conn or not conn.ib.isConnected():
-        raise HTTPException(status_code=400, detail="IB Gateway not connected")
+    if not conn:
+        raise HTTPException(status_code=503, detail="Connection manager unavailable")
+    
+    if not conn.ib.isConnected():
+        logger.info("Attempting to reconnect to IB Gateway...")
+        connected = await conn.connect()
+        if not connected:
+            raise HTTPException(status_code=502, detail="Connection to IB Gateway failed. It may be offline, restarting, or waiting for 2FA/login via VNC.")
+
     if not market_data_service:
         raise HTTPException(status_code=503, detail="Market data service unavailable")
+        
     await market_data_service.ensure_autonomous_streaming(force_resubscribe=True)
     return {"message": "Ticker stream started", "running": True}
 
@@ -528,8 +536,9 @@ async def websocket_bars(websocket: WebSocket, symbol: str = "EURUSD"):
         if len(symbol) == 6:
             contract = Forex(symbol)
             bar_type = "MIDPOINT"
-        elif symbol in ("SPX", "DJI", "OEX", "RUT", "VIX"):
-            contract = Index(symbol, "CBOE", "USD")
+        elif symbol in ("SPX", "DJI", "OEX", "RUT", "VIX", "INDU"):
+            exchange = "CME" if symbol == "INDU" else "CBOE"
+            contract = Index(symbol, exchange, "USD")
             bar_type = "TRADES"
         elif symbol in ("NDX", "COMP"):
             contract = Index(symbol, "NASDAQ", "USD")

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, Set
 from loguru import logger
 import math
-from src.db.clickhouse_client import ch_manager
+from src.db.clickhouse_client import ch_manager, ASSET_TYPE_TO_SEC_TYPE
 from src.db.postgres import SessionLocal
 from src.security_master.models import Instrument
 from src.security_master.repository import InstrumentRepository
@@ -40,12 +40,14 @@ class MarketDataService:
             inst = repo.get_by_id(instrument_id)
             if not inst or not inst.ibkr_conid:
                 return None
+            sec_type = ASSET_TYPE_TO_SEC_TYPE.get((inst.asset_type or "STOCK").upper(), "STK")
             meta = {
                 "instrument_id": inst.id,
                 "symbol": inst.symbol,
                 "ibkr_conid": inst.ibkr_conid,
                 "exchange": inst.exchange or "SMART",
                 "currency": inst.currency or "USD",
+                "sec_type": sec_type,
             }
             self.instrument_meta[instrument_id] = meta
             self.symbol_to_id[inst.symbol.upper()] = instrument_id
@@ -55,12 +57,14 @@ class MarketDataService:
 
     def _register_stream_instrument(self, inst: Instrument) -> None:
         self.always_stream.add(inst.id)
+        sec_type = ASSET_TYPE_TO_SEC_TYPE.get((inst.asset_type or "STOCK").upper(), "STK")
         self.instrument_meta[inst.id] = {
             "instrument_id": inst.id,
             "symbol": inst.symbol,
             "ibkr_conid": inst.ibkr_conid,
             "exchange": inst.exchange or "SMART",
             "currency": inst.currency or "USD",
+            "sec_type": sec_type,
         }
         self.symbol_to_id[inst.symbol.upper()] = inst.id
 
@@ -154,10 +158,28 @@ class MarketDataService:
             logger.error(f"No metadata for instrument_id={instrument_id}")
             return
         try:
-            contract = Contract(conId=int(meta["ibkr_conid"]))
+            sec_type = meta.get("sec_type", "STK")
+            symbol = meta.get("symbol", "")
+            exchange = meta.get("exchange", "SMART")
+            currency = meta.get("currency", "USD")
+
+            # Use proper ib_insync helper classes for contract construction
+            # (matching ibkr_resolver.build_ib_contract pattern)
+            if sec_type == "IND":
+                contract = Index(symbol, exchange, currency)
+            elif sec_type == "STK":
+                contract = Stock(symbol, "SMART", currency)
+            else:
+                contract = Contract(
+                    symbol=symbol,
+                    secType=sec_type,
+                    exchange=exchange,
+                    currency=currency,
+                )
+
             qualified = await self.ib.qualifyContractsAsync(contract)
             if not qualified:
-                logger.error(f"Failed to qualify conId={meta['ibkr_conid']} for id={instrument_id}")
+                logger.error(f"Failed to qualify {symbol} (sec_type={sec_type}) for id={instrument_id}")
                 return
             contract = qualified[0]
             self.contracts[instrument_id] = contract

@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from datetime import datetime, timezone
 from confluent_kafka import Consumer, KafkaError
 from loguru import logger
@@ -38,14 +39,68 @@ class TickIngestionWorker(threading.Thread):
             return
 
         db_client = ch_manager.create_worker_client()
+        
+        column_names = [
+            "instrument_token", "symbol", "exchange",
+            "ltp", "volume", "buy_quantity", "sell_quantity",
+            "open", "high", "low", "close", "change",
+            "oi",
+            "bid_price_1", "bid_qty_1",
+            "bid_price_2", "bid_qty_2",
+            "bid_price_3", "bid_qty_3",
+            "bid_price_4", "bid_qty_4",
+            "bid_price_5", "bid_qty_5",
+            "ask_price_1", "ask_qty_1",
+            "ask_price_2", "ask_qty_2",
+            "ask_price_3", "ask_qty_3",
+            "ask_price_4", "ask_qty_4",
+            "ask_price_5", "ask_qty_5",
+            "ts"
+        ]
+        
+        batch = []
+        batch_limit = 500
+        flush_interval = 1.0  # seconds
+        last_flush = time.time()
 
         while self.running:
             if self.paused:
-                import time
+                if batch:
+                    try:
+                        db_client.insert(
+                            f"{settings.CLICKHOUSE_DB}.raw_ticks",
+                            batch,
+                            column_names=column_names,
+                            settings={"async_insert": 1, "wait_for_async_insert": 0}
+                        )
+                        logger.info(f"Flushed {len(batch)} ticks before pause.")
+                        batch.clear()
+                    except Exception as e:
+                        logger.error(f"Error flushing batch during pause: {e}")
                 time.sleep(1)
+                last_flush = time.time()
                 continue
+            
             try:
-                msg = self.consumer.poll(timeout=1.0)
+                # Poll with a shorter timeout to allow periodic flush even when low tick volume
+                msg = self.consumer.poll(timeout=0.1)
+                
+                # Check periodic flush
+                now = time.time()
+                if batch and (now - last_flush >= flush_interval):
+                    try:
+                        db_client.insert(
+                            f"{settings.CLICKHOUSE_DB}.raw_ticks",
+                            batch,
+                            column_names=column_names,
+                            settings={"async_insert": 1, "wait_for_async_insert": 0}
+                        )
+                        logger.debug(f"Flushed {len(batch)} ticks due to time interval.")
+                        batch.clear()
+                    except Exception as e:
+                        logger.error(f"Error flushing batch on interval: {e}")
+                    last_flush = now
+
                 if msg is None:
                     continue
                 if msg.error():
@@ -115,49 +170,54 @@ class TickIngestionWorker(threading.Thread):
                 else:
                     ts = datetime.now(timezone.utc)
 
-                # Insert full row into raw_ticks
-                db_client.insert(
-                    f"{settings.CLICKHOUSE_DB}.raw_ticks",
-                    [[
-                        instrument_token, symbol, exchange,
-                        ltp, volume, buy_quantity, sell_quantity,
-                        open_price, high_price, low_price, close_price, change,
-                        oi,
-                        bid_price_1, bid_qty_1,
-                        bid_price_2, bid_qty_2,
-                        bid_price_3, bid_qty_3,
-                        bid_price_4, bid_qty_4,
-                        bid_price_5, bid_qty_5,
-                        ask_price_1, ask_qty_1,
-                        ask_price_2, ask_qty_2,
-                        ask_price_3, ask_qty_3,
-                        ask_price_4, ask_qty_4,
-                        ask_price_5, ask_qty_5,
-                        ts
-                    ]],
-                    column_names=[
-                        "instrument_token", "symbol", "exchange",
-                        "ltp", "volume", "buy_quantity", "sell_quantity",
-                        "open", "high", "low", "close", "change",
-                        "oi",
-                        "bid_price_1", "bid_qty_1",
-                        "bid_price_2", "bid_qty_2",
-                        "bid_price_3", "bid_qty_3",
-                        "bid_price_4", "bid_qty_4",
-                        "bid_price_5", "bid_qty_5",
-                        "ask_price_1", "ask_qty_1",
-                        "ask_price_2", "ask_qty_2",
-                        "ask_price_3", "ask_qty_3",
-                        "ask_price_4", "ask_qty_4",
-                        "ask_price_5", "ask_qty_5",
-                        "ts"
-                    ],
-                    settings={"async_insert": 1, "wait_for_async_insert": 0}
-                )
-                logger.debug(f"Ingested full tick for {symbol} ({instrument_token}) → raw_ticks")
+                batch.append([
+                    instrument_token, symbol, exchange,
+                    ltp, volume, buy_quantity, sell_quantity,
+                    open_price, high_price, low_price, close_price, change,
+                    oi,
+                    bid_price_1, bid_qty_1,
+                    bid_price_2, bid_qty_2,
+                    bid_price_3, bid_qty_3,
+                    bid_price_4, bid_qty_4,
+                    bid_price_5, bid_qty_5,
+                    ask_price_1, ask_qty_1,
+                    ask_price_2, ask_qty_2,
+                    ask_price_3, ask_qty_3,
+                    ask_price_4, ask_qty_4,
+                    ask_price_5, ask_qty_5,
+                    ts
+                ])
+
+                if len(batch) >= batch_limit:
+                    try:
+                        db_client.insert(
+                            f"{settings.CLICKHOUSE_DB}.raw_ticks",
+                            batch,
+                            column_names=column_names,
+                            settings={"async_insert": 1, "wait_for_async_insert": 0}
+                        )
+                        logger.debug(f"Flushed {len(batch)} ticks due to batch limit.")
+                        batch.clear()
+                    except Exception as e:
+                        logger.error(f"Error flushing batch on limit: {e}")
+                    last_flush = time.time()
 
             except Exception as e:
                 logger.error(f"Error ingesting tick message: {e}")
+
+        # Flush any remaining ticks on shutdown
+        if batch:
+            try:
+                db_client.insert(
+                    f"{settings.CLICKHOUSE_DB}.raw_ticks",
+                    batch,
+                    column_names=column_names,
+                    settings={"async_insert": 1, "wait_for_async_insert": 0}
+                )
+                logger.info(f"Flushed final {len(batch)} ticks during stop.")
+                batch.clear()
+            except Exception as e:
+                logger.error(f"Error flushing final batch: {e}")
 
         # Cleanup
         try:
