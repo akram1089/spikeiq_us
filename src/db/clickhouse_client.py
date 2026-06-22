@@ -91,10 +91,14 @@ class ClickHouseManager:
             username String,
             password_hash String,
             is_active UInt8 DEFAULT 1,
+            is_admin UInt8 DEFAULT 0,
             created_at DateTime64(3) DEFAULT now64(3)
         ) ENGINE = ReplacingMergeTree(created_at)
         ORDER BY (username);
         """)
+        client.command(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin UInt8 DEFAULT 0"
+        )
         logger.info("Users table verified.")
 
         # Instruments table
