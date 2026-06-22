@@ -12,6 +12,7 @@ import InstrumentsCatalog from './pages/InstrumentsCatalog'
 import { useWebSocket } from './hooks/useWebSocket'
 import toast, { Toaster } from 'react-hot-toast'
 import { playAlertSound } from './utils/browserNotify'
+import { showPreSpikeAlertToast } from './utils/preSpikeAlertUi'
 import { X } from 'lucide-react'
 
 export default function App() {
@@ -39,6 +40,10 @@ export default function App() {
   }, [theme])
 
   const handleWebSocketMessage = useCallback((msg) => {
+    if (msg.type === 'pre_spike_alert' && msg.data) {
+      showPreSpikeAlertToast(msg.data)
+      return
+    }
     if (msg.type === 'price_spike_alert') {
       const spike = msg.data
       const isBuy = spike.final_signal && spike.final_signal.toLowerCase().includes('buy')

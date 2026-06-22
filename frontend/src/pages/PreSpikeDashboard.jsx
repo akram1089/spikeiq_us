@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, RefreshCw, Clock, ArrowRight, Flame, Zap, Glasses, Circle } from 'lucide-react'
-import { getPreSpikeDashboard, getDashboardAnalytics } from '../api/endpoints'
+import { BarChart3, RefreshCw, Clock, ArrowRight, Flame, Zap, Glasses, Circle, BellRing } from 'lucide-react'
+import { getPreSpikeDashboard, getDashboardAnalytics, testPreSpikeAlert, getPreSpikeAlertConfig } from '../api/endpoints'
 import { formatNumber, formatPct } from '../utils/formatters'
 import toast from 'react-hot-toast'
+import { requestPushPermission, isPushActive, setPushEnabled } from '../utils/browserNotify'
+import { showPreSpikeAlertToast } from '../utils/preSpikeAlertUi'
 // Feature flag: disabled because ClickHouse analytics pipeline (v_pre_spike_alerts_ui view chain)
 // currently returns 0 rows and causes unnecessary CPU load (~681 queries, avg 2s, max 8.9s).
 // Re-enable in config/featureFlags.js when the view chain is producing data.
@@ -147,6 +149,9 @@ export default function PreSpikeDashboard() {
 
   // Tab filters
   const [spikeAlertsTab, setSpikeAlertsTab] = useState('ALL')
+  const [testingAlert, setTestingAlert] = useState(false)
+  const [telegramConfigured, setTelegramConfigured] = useState(false)
+  const [pushEnabled, setPushEnabledState] = useState(() => isPushActive())
 
   // Data State
   const [preSpikeData, setPreSpikeData] = useState({
@@ -320,6 +325,59 @@ export default function PreSpikeDashboard() {
     }, 5000) // 5s: real-time updates for fast alerts
     return () => clearInterval(timer)
   }, [loadPreSpikeData])
+
+  useEffect(() => {
+    getPreSpikeAlertConfig()
+      .then((res) => setTelegramConfigured(Boolean(res.data?.telegram_configured)))
+      .catch(() => setTelegramConfigured(false))
+  }, [])
+
+  const handleTestAlert = async () => {
+    setTestingAlert(true)
+    try {
+      if (!isPushActive()) {
+        const granted = await requestPushPermission()
+        if (granted) {
+          setPushEnabled(true)
+          setPushEnabledState(true)
+        }
+      }
+      const res = await testPreSpikeAlert()
+      const data = res.data || {}
+      if (data.alert && !data.ws_clients) {
+        showPreSpikeAlertToast(data.alert)
+      }
+      const tg = data.telegram_sent
+        ? 'Telegram sent'
+        : data.telegram_configured
+          ? 'Telegram failed'
+          : 'Telegram not configured'
+      const ws = data.ws_clients != null ? `${data.ws_clients} browser client(s)` : 'WebSocket dispatched'
+      toast.success(`Test alert fired · ${ws} · ${tg}`)
+    } catch (e) {
+      console.error('Test pre-spike alert failed:', e)
+      toast.error(e.response?.data?.detail || 'Failed to send test alert')
+    } finally {
+      setTestingAlert(false)
+    }
+  }
+
+  const handleTogglePush = async () => {
+    if (pushEnabled) {
+      setPushEnabled(false)
+      setPushEnabledState(false)
+      toast('Browser push disabled', { icon: '🔕' })
+      return
+    }
+    const granted = await requestPushPermission()
+    if (granted) {
+      setPushEnabled(true)
+      setPushEnabledState(true)
+      toast.success('Browser push enabled')
+    } else {
+      toast.error('Browser notification permission denied')
+    }
+  }
 
 
   // Get unique symbols for dropdown select (returned by backend)
@@ -558,6 +616,49 @@ export default function PreSpikeDashboard() {
               </button>
             ))}
           </div>
+
+          <button
+            onClick={handleTogglePush}
+            className="btn btn-ghost"
+            title={pushEnabled ? 'Browser push on' : 'Enable browser push'}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              background: pushEnabled ? 'rgba(16, 185, 129, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              height: '28px',
+              fontSize: '0.72rem',
+              color: pushEnabled ? 'var(--green)' : 'var(--text-secondary)',
+            }}
+          >
+            {pushEnabled ? '🔔 Push On' : '🔕 Push Off'}
+          </button>
+
+          <button
+            onClick={handleTestAlert}
+            className="btn btn-ghost"
+            disabled={testingAlert}
+            title={telegramConfigured ? 'Test browser + Telegram alert' : 'Test browser alert (add Telegram env for mobile)'}
+            style={{
+              padding: '4px 12px',
+              borderRadius: '6px',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              background: 'rgba(239, 68, 68, 0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              height: '28px',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              color: '#f87171',
+            }}
+          >
+            <BellRing size={13} className={testingAlert ? 'spin-animation' : ''} />
+            {testingAlert ? 'Testing…' : 'Test Alert'}
+          </button>
 
           <button
             onClick={handleRefreshClick}

@@ -81,3 +81,8 @@ IB_RESOLVE_BATCH_SIZE = int(os.getenv("IB_RESOLVE_BATCH_SIZE", "50"))
 IB_RESOLVE_RETRY_DELAY = float(os.getenv("IB_RESOLVE_RETRY_DELAY", "2.0"))
 IB_RESOLVE_MAX_RETRIES = int(os.getenv("IB_RESOLVE_MAX_RETRIES", "3"))
 
+# Pre-spike watchlist alerts (Telegram + WebSocket)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+PRE_SPIKE_ALERT_POLL_SECONDS = int(os.getenv("PRE_SPIKE_ALERT_POLL_SECONDS", "5"))
+

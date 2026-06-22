@@ -236,6 +236,27 @@ class MarketDataService:
         if not self.websockets[symbol]:
             del self.websockets[symbol]
 
+    def broadcast_json(self, msg: dict) -> int:
+        """Send a JSON message to every connected tick WebSocket client."""
+        loop = self._loop
+        if not loop:
+            return 0
+
+        sent = 0
+        seen: set[int] = set()
+        for ws_set in list(self.websockets.values()):
+            for ws in list(ws_set):
+                ws_id = id(ws)
+                if ws_id in seen:
+                    continue
+                seen.add(ws_id)
+                try:
+                    asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
+                    sent += 1
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast alert to WebSocket: {e}")
+        return sent
+
     def _on_ticker_update(self, instrument_id: int, ticker: Ticker):
         meta = self.instrument_meta.get(instrument_id) or self._load_instrument_meta(instrument_id)
         if not meta or instrument_id not in self.contracts:

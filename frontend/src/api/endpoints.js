@@ -62,6 +62,8 @@ export const getPreSpikeDashboard = ({
   if (symbol && symbol !== 'ALL') params.symbol = symbol
   return client.get('/market/pre-spike', { params })
 }
+export const testPreSpikeAlert = () => client.post('/market/pre-spike/test-alert')
+export const getPreSpikeAlertConfig = () => client.get('/market/pre-spike/alert-config')
 
 // ── OHLCV (backend main.py) ──
 export const getOHLCV = (instrument, from, to, limit = 500) =>

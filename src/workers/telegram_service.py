@@ -144,7 +144,7 @@ def send_pre_spike_telegram(bot_token: str, chat_id: str, alert: dict) -> bool:
         f"📌 <b>Signal: {signal_type}</b>\n"
         f"⚙️ Setup: <b>{setup}</b>\n"
         f"{status_emoji} Status: <b>{alert_status}</b>\n"
-        f"💰 Price: <b>₹{price:,.2f}</b>\n"
+        f"💰 Price: <b>${price:,.2f}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"<i>SpikeIQ Pre-Spike Signals</i>"
     )

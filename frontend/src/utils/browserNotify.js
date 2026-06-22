@@ -176,3 +176,27 @@ export function notifyFromAlert(alert) {
 export function setPushEnabled(enabled) {
   localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
 }
+
+/** Build display strings for a pre-spike watchlist alert row. */
+export function getPreSpikeAlertDisplay(alert) {
+  if (!alert) {
+    return { title: 'Pre-Spike Alert', body: '', emoji: '🔔', status: '' }
+  }
+  const status = String(alert.alert_status || '').toUpperCase()
+  const emoji = { HOT: '🔥', WATCH: '👀', EARLY: '⏰', ACTIVE: '⚡' }[status] || '🔔'
+  const price = alert.price != null ? `$${Number(alert.price).toFixed(2)}` : '—'
+  const title = `${emoji} Pre-Spike: ${alert.symbol || ''}`
+  const body = `${alert.signal_type || 'WATCH'} · ${alert.setup || ''} · ${price} · ${status}`
+  return { title, body, emoji, status }
+}
+
+/** Play sound + browser push for a pre-spike watchlist alert. */
+export function notifyPreSpikeAlert(alert) {
+  if (!alert) return false
+  playAlertSound()
+  const { title, body } = getPreSpikeAlertDisplay(alert)
+  return sendBrowserNotification(title, body, {
+    tag: `trade-alert-pre-spike-${alert.symbol || 'sym'}-${alert.version || alert.alert_time || 't'}`,
+    requireInteraction: true,
+  })
+}

@@ -541,6 +541,31 @@ async def get_pre_spike_dashboard(
 
 
 
+@router.post("/pre-spike/test-alert")
+async def test_pre_spike_alert(user: dict = Depends(get_current_user)):
+    """Fire a test pre-spike watchlist alert (browser WebSocket + Telegram)."""
+    from src.workers.pre_spike_alert_service import (
+        build_test_pre_spike_alert,
+        dispatch_pre_spike_alert,
+    )
+
+    result = dispatch_pre_spike_alert(build_test_pre_spike_alert())
+    return {
+        "ok": True,
+        "message": "Test pre-spike alert dispatched",
+        **result,
+    }
+
+
+@router.get("/pre-spike/alert-config")
+async def pre_spike_alert_config(user: dict = Depends(get_current_user)):
+    """Return whether Telegram is configured for pre-spike alerts."""
+    return {
+        "telegram_configured": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
+        "poll_seconds": settings.PRE_SPIKE_ALERT_POLL_SECONDS,
+    }
+
+
 @router.get("/dashboard-analytics")
 async def get_dashboard_analytics(
     timeframe: str = Query(default="30", description="Timeframe in minutes or 'ALL'"),

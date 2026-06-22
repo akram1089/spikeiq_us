@@ -30,6 +30,8 @@ from src.queue.kafka_producer import kafka_producer
 from src.workers.subscription_worker import SubscriptionWorker
 from src.workers.tick_ingestion_worker import TickIngestionWorker
 from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
+from src.workers.pre_spike_alert_worker import PreSpikeAlertWorker
+from src.workers.pre_spike_alert_service import set_market_data_service
 from src.auth.router import router as auth_router, get_current_user
 from src.market.router import router as market_router
 from src.market.analytics_router import router as analytics_router
@@ -52,6 +54,7 @@ hist_service: HistoricalDataService = None
 market_data_service: MarketDataService = None
 sub_worker: SubscriptionWorker = None
 tick_worker: TickIngestionWorker = None
+pre_spike_worker: PreSpikeAlertWorker = None
 
 _status_cache: dict = {}
 _status_cache_ts: float = 0.0
@@ -67,7 +70,7 @@ sm_sync_worker: SecurityMasterSyncWorker = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages the startup and shutdown lifecycles of the connection to IB Gateway, ClickHouse, and Kafka."""
-    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker
+    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker, pre_spike_worker
     
     # 1. Initialize PostgreSQL Security Master
     try:
@@ -109,6 +112,7 @@ async def lifespan(app: FastAPI):
     # Start autonomous market data pipeline (no UI required)
     market_data_service = MarketDataService(conn.ib)
     set_subscriptions_market_data(market_data_service)
+    set_market_data_service(market_data_service)
 
     async def _start_autonomous_streaming():
         try:
@@ -146,7 +150,10 @@ async def lifespan(app: FastAPI):
         
         tick_worker = TickIngestionWorker()
         tick_worker.start()
-        logger.success("Started background workers (SM sync, subscriptions, ticks).")
+
+        pre_spike_worker = PreSpikeAlertWorker()
+        pre_spike_worker.start()
+        logger.success("Started background workers (SM sync, subscriptions, ticks, pre-spike alerts).")
     except Exception as e:
         logger.error(f"Failed to start background workers: {e}")
 
@@ -159,6 +166,8 @@ async def lifespan(app: FastAPI):
         sub_worker.stop()
     if tick_worker:
         tick_worker.stop()
+    if pre_spike_worker:
+        pre_spike_worker.stop()
     if kafka_producer:
         kafka_producer.flush()
     if market_data_service:
