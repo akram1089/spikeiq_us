@@ -140,3 +140,4 @@ sudo ufw reload
 - **502 Bad Gateway**: wait for `ib-gateway` and `backend` to become healthy (`docker compose ps`).
 - **Gateway login / 2FA**: connect VNC to `127.0.0.1:5900` (SSH tunnel if remote).
 - **Conflicts with other apps**: this stack does not bind host ports 80, 443, 8000, or 5173.
+- **Remote users see blank page / Firefox `NS_BINDING_ABORTED` on JS**: host nginx must **not** use `proxy_buffering off` for `/` and `/assets/` (only for `/api/ws/`). Update from `deploy/host-nginx-spikeiq.mooo.com.conf`, then `sudo nginx -t && sudo systemctl reload nginx`. Rebuild frontend so assets are served as a production build (not Vite dev).
