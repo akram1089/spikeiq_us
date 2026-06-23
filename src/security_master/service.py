@@ -133,7 +133,7 @@ class InstrumentService:
         elif resolved_type == "INDEX":
             contract = Index(clean, "CBOE", "USD")
         elif resolved_type == "FUTURE":
-            contract = Future(clean, exchange="CME", currency="USD")
+            contract = Future(clean, exchange="GLOBEX", currency="USD")
         elif (asset_type or sec_type or "").upper() in ("CASH",):
             contract = Forex(clean)
             resolved_type = "STOCK"
@@ -227,7 +227,11 @@ class InstrumentService:
         if not resolved:
             raise HTTPException(
                 status_code=422,
-                detail=f"Unable to resolve IBKR contract for instrument {instrument_id}",
+                detail=(
+                    f"Unable to resolve IBKR contract for {inst.symbol} "
+                    f"(instrument {instrument_id}). "
+                    "Ensure IB Gateway is connected and CME futures permissions are enabled."
+                ),
             )
         inst = self.repo.update_conid(
             inst,

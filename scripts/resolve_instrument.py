@@ -48,7 +48,11 @@ async def main_async(instrument_id: int) -> int:
             conn.disconnect()
 
         if not result:
-            logger.error(f"Failed to resolve {inst.symbol} (id={instrument_id})")
+            logger.error(
+                f"Failed to resolve {inst.symbol} (id={instrument_id}, "
+                f"type={inst.asset_type}, exchange={inst.exchange}, "
+                f"local_symbol={inst.local_symbol})"
+            )
             return 1
 
         repo.update_conid(

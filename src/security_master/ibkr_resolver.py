@@ -69,16 +69,13 @@ def build_ib_contract(instrument) -> Contract:
         root_sym, expiry = parse_futures_contract_symbol(local)
         if not expiry and local != symbol:
             root_sym, expiry = parse_futures_contract_symbol(symbol)
-        exchange = instrument.exchange or "CME"
-        fut = Future(
+        exchange = instrument.exchange or "GLOBEX"
+        return Future(
             symbol=root_sym,
             lastTradeDateOrContractMonth=expiry,
             exchange=exchange,
             currency=instrument.currency or "USD",
         )
-        fut.localSymbol = local
-        fut.tradingClass = root_sym
-        return fut
     return Stock(symbol, exchange, instrument.currency or "USD")
 
 
@@ -101,11 +98,54 @@ def parse_futures_expiry(contract_symbol: str) -> str:
 
 
 FUTURES_EXCHANGE_FALLBACKS: dict[str, list[str]] = {
-    "CME": ["CME", "GLOBEX"],
-    "CBOT": ["CBOT", "ECBOT"],
+    "CME": ["GLOBEX", "CME"],
+    "CBOT": ["ECBOT", "CBOT"],
     "NYMEX": ["NYMEX"],
     "COMEX": ["COMEX"],
 }
+
+
+async def _qualify_contract(ib: IB, candidate: Contract) -> Contract | None:
+    try:
+        details_list = await ib.reqContractDetailsAsync(candidate)
+        if details_list:
+            return details_list[0].contract
+        qualified = await ib.qualifyContractsAsync(candidate)
+        if qualified:
+            return qualified[0]
+    except Exception as e:
+        logger.debug(f"IB qualify failed for {candidate}: {e}")
+    return None
+
+
+async def _resolve_future_via_matching_symbols(
+    ib: IB, local: str, root_sym: str
+) -> Contract | None:
+    """Fallback: search IB symbol directory for the exact futures local symbol."""
+    try:
+        descriptions = await ib.reqMatchingSymbolsAsync(local)
+    except Exception as e:
+        logger.debug(f"reqMatchingSymbols failed for {local}: {e}")
+        return None
+
+    local_upper = local.upper()
+    best: Contract | None = None
+    for desc in descriptions:
+        c = desc.contract
+        if (c.secType or "").upper() != "FUT":
+            continue
+        ls = (getattr(c, "localSymbol", None) or "").upper()
+        sym = (getattr(c, "symbol", None) or "").upper()
+        if ls != local_upper and sym != root_sym:
+            continue
+        qualified = await _qualify_contract(ib, c)
+        if not qualified:
+            continue
+        if (getattr(qualified, "localSymbol", None) or "").upper() == local_upper:
+            return qualified
+        if best is None:
+            best = qualified
+    return best
 
 
 def generate_futures_contracts(
@@ -152,17 +192,20 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
         contracts = _resolution_contract_variants(instrument)
         contract = None
         for candidate in contracts:
-            details_list = await ib.reqContractDetailsAsync(candidate)
-            if details_list:
-                contract = details_list[0].contract
-                break
-            qualified = await ib.qualifyContractsAsync(candidate)
-            if qualified:
-                contract = qualified[0]
+            contract = await _qualify_contract(ib, candidate)
+            if contract:
                 break
 
+        if not contract and instrument.asset_type.upper() == "FUTURE":
+            local = (instrument.local_symbol or instrument.symbol).upper()
+            root_sym, _ = parse_futures_contract_symbol(local)
+            contract = await _resolve_future_via_matching_symbols(ib, local, root_sym)
+
         if not contract:
-            logger.warning(f"No contract details for {instrument.symbol}")
+            logger.warning(
+                f"No contract details for {instrument.symbol} "
+                f"(asset_type={instrument.asset_type}, exchange={instrument.exchange})"
+            )
             return None
 
         return ResolvedContract(
@@ -179,46 +222,51 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
 
 def _resolution_contract_variants(instrument) -> list[Contract]:
     """Build IB contract candidates, including futures exchange fallbacks."""
-    base = build_ib_contract(instrument)
-    variants: list[Contract] = [base]
     if instrument.asset_type.upper() != "FUTURE":
-        return variants
+        return [build_ib_contract(instrument)]
 
     local = (instrument.local_symbol or instrument.symbol).upper()
     root_sym, expiry = parse_futures_contract_symbol(local)
     if not expiry:
-        return variants
+        return [build_ib_contract(instrument)]
 
+    currency = instrument.currency or "USD"
     primary_exchange = (instrument.exchange or "CME").upper()
-    seen: set[tuple[str, ...]] = set()
+    variants: list[Contract] = []
+    seen: set[str] = set()
 
-    def add_variant(exchange: str) -> None:
-        key = ("root", root_sym, expiry, exchange)
+    def add(candidate: Contract) -> None:
+        key = repr(candidate)
         if key in seen:
             return
         seen.add(key)
+        variants.append(candidate)
+
+    # 1) Local symbol on GLOBEX/CME (most reliable for CME equity index futures)
+    for exchange in ("GLOBEX", "CME", "", primary_exchange):
+        fut = Future(localSymbol=local, currency=currency)
+        if exchange:
+            fut.exchange = exchange
+        add(fut)
+
+    # 2) Root + expiry across exchange aliases
+    for exchange in FUTURES_EXCHANGE_FALLBACKS.get(primary_exchange, [primary_exchange, "GLOBEX"]):
+        add(
+            Future(
+                symbol=root_sym,
+                lastTradeDateOrContractMonth=expiry,
+                exchange=exchange,
+                currency=currency,
+            )
+        )
         fut = Future(
             symbol=root_sym,
             lastTradeDateOrContractMonth=expiry,
             exchange=exchange,
-            currency=instrument.currency or "USD",
+            currency=currency,
         )
         fut.localSymbol = local
-        fut.tradingClass = root_sym
-        variants.append(fut)
+        add(fut)
 
-    for exchange in FUTURES_EXCHANGE_FALLBACKS.get(primary_exchange, [primary_exchange]):
-        add_variant(exchange)
-
-    # IB often resolves futures most reliably by local symbol alone.
-    for exchange in ("", primary_exchange, "GLOBEX", "CME", "ECBOT", "CBOT", "NYMEX", "COMEX"):
-        key = ("local", local, exchange)
-        if key in seen:
-            continue
-        seen.add(key)
-        fut = Future(localSymbol=local, currency=instrument.currency or "USD")
-        if exchange:
-            fut.exchange = exchange
-        variants.append(fut)
-
+    add(build_ib_contract(instrument))
     return variants

@@ -34,8 +34,8 @@ def test_build_ib_contract_future_uses_root_not_full_symbol():
     contract = build_ib_contract(Inst())
     assert contract.symbol == "ES"
     assert contract.lastTradeDateOrContractMonth == "202609"
-    assert contract.localSymbol == "ESU26"
-    assert contract.tradingClass == "ES"
+    assert contract.exchange == "CME"
+    assert not getattr(contract, "localSymbol", None)
 
 
 def test_generate_futures_contracts_quarterly():
