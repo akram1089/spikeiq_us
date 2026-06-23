@@ -237,13 +237,13 @@ class MarketDataService:
         seen: set[int] = set()
         stale: list[tuple[str, object]] = []
         for symbol, ws_set in list(self.websockets.items()):
-        for ws in list(ws_set):
-            state = getattr(ws, "client_state", None)
-            if state is not None and state != WebSocketState.CONNECTED:
-                if state == WebSocketState.DISCONNECTED:
-                    stale.append((symbol, ws))
-                continue
-            seen.add(id(ws))
+            for ws in list(ws_set):
+                state = getattr(ws, "client_state", None)
+                if state is not None and state != WebSocketState.CONNECTED:
+                    if state == WebSocketState.DISCONNECTED:
+                        stale.append((symbol, ws))
+                    continue
+                seen.add(id(ws))
         for symbol, ws in stale:
             self.unregister_websocket(symbol, ws)
         return len(seen)
