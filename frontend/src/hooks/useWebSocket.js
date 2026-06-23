@@ -44,6 +44,8 @@ export function useWebSocket(url, onMessageCallback) {
   const [alerts, setAlerts] = useState([])
   const reconnectTimeout = useRef(null)
   const reconnectAttempts = useRef(0)
+  const pingInterval = useRef(null)
+  const offlineDebounce = useRef(null)
   const maxReconnectAttempts = 20
   const shouldConnect = url !== null
 
@@ -57,13 +59,22 @@ export function useWebSocket(url, onMessageCallback) {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     if (wsRef.current?.readyState === WebSocket.CONNECTING) return
 
+    clearTimeout(offlineDebounce.current)
+
     try {
       const wsUrl = (url == null || url === undefined) ? buildDefaultWsUrl() : url
       wsRef.current = new WebSocket(wsUrl)
 
       wsRef.current.onopen = () => {
+        clearTimeout(offlineDebounce.current)
         setIsConnected(true)
         reconnectAttempts.current = 0
+        clearInterval(pingInterval.current)
+        pingInterval.current = setInterval(() => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send('ping')
+          }
+        }, 25000)
       }
 
       wsRef.current.onmessage = (event) => {
@@ -103,9 +114,19 @@ export function useWebSocket(url, onMessageCallback) {
       }
 
       wsRef.current.onclose = (event) => {
-        setIsConnected(false)
+        clearInterval(pingInterval.current)
         wsRef.current = null
-        if (!shouldConnect || reconnectAttempts.current >= maxReconnectAttempts) return
+        if (!shouldConnect || reconnectAttempts.current >= maxReconnectAttempts) {
+          clearTimeout(offlineDebounce.current)
+          setIsConnected(false)
+          return
+        }
+        // Avoid flickering OFFLINE during brief reconnect gaps
+        offlineDebounce.current = setTimeout(() => {
+          if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            setIsConnected(false)
+          }
+        }, 2500)
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)
         reconnectTimeout.current = setTimeout(() => {
           reconnectAttempts.current++
@@ -127,6 +148,8 @@ export function useWebSocket(url, onMessageCallback) {
 
   const disconnect = useCallback(() => {
     clearTimeout(reconnectTimeout.current)
+    clearTimeout(offlineDebounce.current)
+    clearInterval(pingInterval.current)
     reconnectAttempts.current = maxReconnectAttempts
     if (wsRef.current) {
       wsRef.current.onclose = null

@@ -7,6 +7,7 @@ import math
 from src.db.clickhouse_client import ch_manager, ASSET_TYPE_TO_SEC_TYPE
 from src.db.postgres import SessionLocal
 from src.security_master.models import Instrument
+from src.security_master.repository import InstrumentRepository
 from src.security_master.ibkr_resolver import build_ib_contract
 
 class MarketDataService:
@@ -236,11 +237,13 @@ class MarketDataService:
         seen: set[int] = set()
         stale: list[tuple[str, object]] = []
         for symbol, ws_set in list(self.websockets.items()):
-            for ws in list(ws_set):
-                if getattr(ws, "client_state", None) != WebSocketState.CONNECTED:
+        for ws in list(ws_set):
+            state = getattr(ws, "client_state", None)
+            if state is not None and state != WebSocketState.CONNECTED:
+                if state == WebSocketState.DISCONNECTED:
                     stale.append((symbol, ws))
-                    continue
-                seen.add(id(ws))
+                continue
+            seen.add(id(ws))
         for symbol, ws in stale:
             self.unregister_websocket(symbol, ws)
         return len(seen)

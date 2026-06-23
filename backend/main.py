@@ -263,17 +263,25 @@ async def ticker_status(user: dict = Depends(get_current_user)):
 async def start_ticker(user: dict = Depends(get_current_user)):
     if not conn:
         raise HTTPException(status_code=503, detail="Connection manager unavailable")
-    
+
     if not conn.ib.isConnected():
         logger.info("Attempting to reconnect to IB Gateway...")
         connected = await conn.connect()
         if not connected:
-            raise HTTPException(status_code=502, detail="Connection to IB Gateway failed. It may be offline, restarting, or waiting for 2FA/login via VNC.")
+            raise HTTPException(
+                status_code=502,
+                detail="Connection to IB Gateway failed. It may be offline, restarting, or waiting for 2FA/login via VNC.",
+            )
 
     if not market_data_service:
         raise HTTPException(status_code=503, detail="Market data service unavailable")
-        
-    await market_data_service.ensure_autonomous_streaming(force_resubscribe=True)
+
+    try:
+        await market_data_service.ensure_autonomous_streaming(force_resubscribe=True)
+    except Exception as e:
+        logger.exception("Failed to start ticker stream")
+        raise HTTPException(status_code=500, detail=f"Failed to start ticker stream: {e}")
+
     return {"message": "Ticker stream started", "running": True}
 
 
