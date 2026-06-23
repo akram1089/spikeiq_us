@@ -99,8 +99,6 @@ export function useWebSocket(url, onMessageCallback) {
             }
           } else if (msg.type === 'alert') {
             setAlerts((prev) => [msg.data, ...prev].slice(0, 100))
-          } else if (msg.type === 'pre_spike_alert') {
-            setAlerts((prev) => [msg.data, ...prev].slice(0, 100))
           } else if (msg.type === 'snapshot') {
             const snapshot = {}
             for (const tick of msg.data) {

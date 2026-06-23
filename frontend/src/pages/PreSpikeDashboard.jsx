@@ -10,6 +10,7 @@ import { showPreSpikeAlertToast } from '../utils/preSpikeAlertUi'
 // currently returns 0 rows and causes unnecessary CPU load (~681 queries, avg 2s, max 8.9s).
 // Re-enable in config/featureFlags.js when the view chain is producing data.
 import { ENABLE_PRE_SPIKE_ALERTS } from '../config/featureFlags'
+import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT } from '../utils/preSpikeAlertEvents'
 
 // Helper to format ISO timestamp to HH:MM:SS
 function formatSpikeTime(ts) {
@@ -167,6 +168,7 @@ export default function PreSpikeDashboard() {
   const loading = watchlistLoading || alertsLoading
   
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [alertWsLive, setAlertWsLive] = useState(false)
 
   // State to force age column updates every second
   const [, setAgeTick] = useState(0)
@@ -298,11 +300,9 @@ export default function PreSpikeDashboard() {
     spikeAlertsTab
   ])
 
-  // Initial and periodic fetch
-  // DISABLED when ENABLE_PRE_SPIKE_ALERTS is false — no polling, no API calls.
+  // Initial load for KPIs, spike panel, and symbol list (filter/pagination changes only — no polling).
   useEffect(() => {
     if (!ENABLE_PRE_SPIKE_ALERTS) {
-      // Do not call loadPreSpikeData — v_pre_spike_alerts_ui is temporarily disabled.
       setWatchlistLoading(false)
       setAlertsLoading(false)
       return
@@ -311,20 +311,80 @@ export default function PreSpikeDashboard() {
     setLastRefresh(new Date())
   }, [loadPreSpikeData])
 
-  useEffect(() => {
-    if (!ENABLE_PRE_SPIKE_ALERTS) {
-      // DISABLED: setInterval polling for pre-spike dashboard was running every 5 seconds.
-      // Disabled because v_pre_spike_alerts_ui returns 0 rows and causes unnecessary
-      // ClickHouse CPU load (~681 executions, avg 2s, max 8.9s per query).
-      return
+  const alertMatchesFilters = useCallback((row) => {
+    if (!row?.symbol) return false
+    if (selectedSymbol !== 'ALL' && row.symbol !== selectedSymbol) return false
+    const symType = getSymbolType(row.symbol)
+    if (selectedType !== 'ALL' && symType !== selectedType) return false
+    if (timeframe === 'ALL') return true
+    const alertMs = new Date(row.alert_time).getTime()
+    if (Number.isNaN(alertMs)) return true
+    const ageMs = Date.now() - alertMs
+    const windows = {
+      '15M': 15 * 60 * 1000,
+      '30M': 30 * 60 * 1000,
+      '45M': 45 * 60 * 1000,
+      '60M': 60 * 60 * 1000,
     }
-    const timer = setInterval(() => {
-      // Background refresh: no loading spinner — data updates silently
-      loadPreSpikeData()
+    if (windows[timeframe]) return ageMs <= windows[timeframe]
+    return true
+  }, [selectedSymbol, selectedType, timeframe])
+
+  const bumpKpisForAlert = useCallback((kpis, row) => {
+    const st = String(row.signal_type || '').toUpperCase()
+    const next = { ...kpis }
+    if (st.includes('FUTURES') || st.includes('LEAD')) {
+      next.futures_leads = (next.futures_leads || 0) + 1
+    } else if (st.includes('INDEX')) {
+      next.index_watches = (next.index_watches || 0) + 1
+    } else if (st.includes('STOCK')) {
+      next.stock_watches = (next.stock_watches || 0) + 1
+    }
+    return next
+  }, [])
+
+  useEffect(() => {
+    const onLiveAlert = (event) => {
+      const row = event.detail
+      if (!row || !alertMatchesFilters(row)) return
+      setPreSpikeData((prev) => ({
+        ...prev,
+        kpis: bumpKpisForAlert(prev.kpis || {}, row),
+        watchlist: [row, ...(prev.watchlist || [])].slice(0, watchlistPageSize),
+        watchlist_total: (prev.watchlist_total || 0) + 1,
+      }))
       setLastRefresh(new Date())
-    }, 5000) // 5s: real-time updates for fast alerts
-    return () => clearInterval(timer)
-  }, [loadPreSpikeData])
+    }
+    const onSnapshot = (event) => {
+      const rows = Array.isArray(event.detail) ? event.detail : []
+      const filtered = rows.filter(alertMatchesFilters)
+      if (!filtered.length) return
+      setPreSpikeData((prev) => ({
+        ...prev,
+        watchlist: filtered.slice(0, watchlistPageSize),
+        watchlist_total: filtered.length,
+        kpis: filtered.reduce((kpis, row) => bumpKpisForAlert(kpis, row), {
+          futures_leads: 0,
+          index_watches: 0,
+          stock_watches: 0,
+          active_spikes: prev.kpis?.active_spikes || 0,
+        }),
+      }))
+      setWatchlistLoading(false)
+      setLastRefresh(new Date())
+    }
+    const onWsStatus = (event) => {
+      setAlertWsLive(Boolean(event.detail?.connected))
+    }
+    window.addEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
+    window.addEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
+    window.addEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
+    return () => {
+      window.removeEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
+      window.removeEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
+      window.removeEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
+    }
+  }, [alertMatchesFilters, bumpKpisForAlert, watchlistPageSize])
 
   useEffect(() => {
     getPreSpikeAlertConfig()
@@ -335,13 +395,6 @@ export default function PreSpikeDashboard() {
   const handleTestAlert = async () => {
     setTestingAlert(true)
     try {
-      if (!isPushActive()) {
-        const granted = await requestPushPermission()
-        if (granted) {
-          setPushEnabled(true)
-          setPushEnabledState(true)
-        }
-      }
       const res = await testPreSpikeAlert()
       const data = res.data || {}
       if (data.alert && !data.ws_clients) {
@@ -349,9 +402,11 @@ export default function PreSpikeDashboard() {
       }
       const tg = data.telegram_sent
         ? 'Telegram sent'
-        : data.telegram_configured
-          ? 'Telegram failed'
-          : 'Telegram not configured'
+        : data.telegram_queued
+          ? 'Telegram queued'
+          : data.telegram_configured
+            ? 'Telegram failed'
+            : 'Telegram not configured'
       const ws = data.ws_clients != null ? `${data.ws_clients} browser client(s)` : 'WebSocket dispatched'
       toast.success(`Test alert fired · ${ws} · ${tg}`)
     } catch (e) {
@@ -550,6 +605,33 @@ export default function PreSpikeDashboard() {
         <h1 className="page-title" style={{ margin: 0, fontSize: '1.25rem', whiteSpace: 'nowrap' }}>PRE-SPIKE WATCHLIST DASHBOARD</h1>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+          <span
+            title={alertWsLive ? 'Real-time alert stream connected' : 'Waiting for alert WebSocket'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.72rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              padding: '4px 10px',
+              borderRadius: '999px',
+              border: `1px solid ${alertWsLive ? 'rgba(16, 185, 129, 0.45)' : 'rgba(148, 163, 184, 0.35)'}`,
+              color: alertWsLive ? '#10b981' : 'var(--text-secondary)',
+              background: alertWsLive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(148, 163, 184, 0.08)',
+            }}
+          >
+            <span
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: alertWsLive ? '#10b981' : '#94a3b8',
+                boxShadow: alertWsLive ? '0 0 8px rgba(16, 185, 129, 0.8)' : 'none',
+              }}
+            />
+            {alertWsLive ? 'LIVE ALERTS' : 'ALERTS OFFLINE'}
+          </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
             <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Symbol:</span>
             <select

@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard'
 import PreSpikeDashboard from './pages/PreSpikeDashboard'
 import InstrumentsCatalog from './pages/InstrumentsCatalog'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useAlertWebSocket } from './hooks/useAlertWebSocket'
 import toast, { Toaster } from 'react-hot-toast'
 import { playAlertSound } from './utils/browserNotify'
 import { showPreSpikeAlertToast } from './utils/preSpikeAlertUi'
@@ -39,11 +40,13 @@ export default function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  const handleWebSocketMessage = useCallback((msg) => {
+  const handleAlertWebSocketMessage = useCallback((msg) => {
     if (msg.type === 'pre_spike_alert' && msg.data) {
       showPreSpikeAlertToast(msg.data)
-      return
     }
+  }, [])
+
+  const handleWebSocketMessage = useCallback((msg) => {
     if (msg.type === 'price_spike_alert') {
       const spike = msg.data
       const isBuy = spike.final_signal && spike.final_signal.toLowerCase().includes('buy')
@@ -106,6 +109,8 @@ export default function App() {
     isAuthenticated ? undefined : null,
     handleWebSocketMessage
   )
+
+  useAlertWebSocket(isAuthenticated, handleAlertWebSocketMessage)
 
   if (!isAuthenticated) {
     return (

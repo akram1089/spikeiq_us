@@ -267,6 +267,13 @@ class MarketDataService:
         return len(seen)
 
     def register_websocket(self, symbol: str, websocket):
+        try:
+            loop = asyncio.get_running_loop()
+            if self._loop is None or self._loop.is_closed():
+                self._loop = loop
+        except RuntimeError:
+            pass
+
         symbol = symbol.upper()
         if symbol not in self.websockets:
             self.websockets[symbol] = set()

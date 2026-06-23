@@ -30,8 +30,17 @@ from src.queue.kafka_producer import kafka_producer
 from src.workers.subscription_worker import SubscriptionWorker
 from src.workers.tick_ingestion_worker import TickIngestionWorker
 from src.workers.security_master_sync_worker import SecurityMasterSyncWorker
-from src.workers.pre_spike_alert_worker import PreSpikeAlertWorker
-from src.workers.pre_spike_alert_service import set_market_data_service
+from src.workers.pre_spike_alert_service import (
+    set_market_data_service,
+    set_alert_event_loop,
+    register_alert_websocket,
+    unregister_alert_websocket,
+)
+from src.workers.pre_spike_alert_watcher import (
+    ensure_alert_stream_running,
+    maybe_stop_alert_stream,
+    send_alert_bootstrap,
+)
 from src.auth.router import router as auth_router, get_current_user
 from src.market.router import router as market_router
 from src.market.analytics_router import router as analytics_router
@@ -54,7 +63,6 @@ hist_service: HistoricalDataService = None
 market_data_service: MarketDataService = None
 sub_worker: SubscriptionWorker = None
 tick_worker: TickIngestionWorker = None
-pre_spike_worker: PreSpikeAlertWorker = None
 
 _status_cache: dict = {}
 _status_cache_ts: float = 0.0
@@ -70,7 +78,7 @@ sm_sync_worker: SecurityMasterSyncWorker = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages the startup and shutdown lifecycles of the connection to IB Gateway, ClickHouse, and Kafka."""
-    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker, pre_spike_worker
+    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker
     
     # 1. Initialize PostgreSQL Security Master
     try:
@@ -96,6 +104,7 @@ async def lifespan(app: FastAPI):
     # Bind Uvicorn's active running loop to the thread context
     loop = asyncio.get_running_loop()
     asyncio.set_event_loop(loop)
+    set_alert_event_loop(loop)
     
     conn = ConnectionManager()
     connected = await conn.connect()
@@ -151,9 +160,7 @@ async def lifespan(app: FastAPI):
         tick_worker = TickIngestionWorker()
         tick_worker.start()
 
-        pre_spike_worker = PreSpikeAlertWorker()
-        pre_spike_worker.start()
-        logger.success("Started background workers (SM sync, subscriptions, ticks, pre-spike alerts).")
+        logger.success("Started background workers (SM sync, subscriptions, ticks).")
     except Exception as e:
         logger.error(f"Failed to start background workers: {e}")
 
@@ -166,8 +173,7 @@ async def lifespan(app: FastAPI):
         sub_worker.stop()
     if tick_worker:
         tick_worker.stop()
-    if pre_spike_worker:
-        pre_spike_worker.stop()
+    await maybe_stop_alert_stream()
     if kafka_producer:
         kafka_producer.flush()
     if market_data_service:
@@ -511,6 +517,29 @@ async def client_log(data: dict):
     """Logs client-side frontend errors to the backend console."""
     logger.error(f"====== CLIENT-SIDE ERROR ======\nMessage: {data.get('message')}\nStack: {data.get('stack')}\n===============================")
     return {"status": "logged"}
+
+@app.websocket("/api/ws/alerts")
+async def websocket_alerts(websocket: WebSocket):
+    """Dedicated real-time channel for pre-spike alerts (WebSocket-only, no HTTP polling)."""
+    await websocket.accept()
+    client_count = register_alert_websocket(websocket)
+    logger.info(f"Alert WebSocket client connected (total={client_count})")
+    await websocket.send_json({"type": "connected", "channel": "alerts"})
+    await send_alert_bootstrap(websocket)
+    await ensure_alert_stream_running()
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        logger.info("Alert WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"Error in alerts WebSocket: {e}")
+    finally:
+        remaining = unregister_alert_websocket(websocket)
+        await maybe_stop_alert_stream()
+        logger.info(f"Alert WebSocket unregistered (remaining={remaining})")
+
 
 @app.websocket("/api/ws/ticks")
 async def websocket_ticks(websocket: WebSocket, symbols: str = "AAPL"):
