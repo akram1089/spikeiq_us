@@ -190,10 +190,10 @@ def _resolution_contract_variants(instrument) -> list[Contract]:
         return variants
 
     primary_exchange = (instrument.exchange or "CME").upper()
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, ...]] = set()
 
     def add_variant(exchange: str) -> None:
-        key = (root_sym, expiry, exchange)
+        key = ("root", root_sym, expiry, exchange)
         if key in seen:
             return
         seen.add(key)
@@ -209,5 +209,16 @@ def _resolution_contract_variants(instrument) -> list[Contract]:
 
     for exchange in FUTURES_EXCHANGE_FALLBACKS.get(primary_exchange, [primary_exchange]):
         add_variant(exchange)
+
+    # IB often resolves futures most reliably by local symbol alone.
+    for exchange in ("", primary_exchange, "GLOBEX", "CME", "ECBOT", "CBOT", "NYMEX", "COMEX"):
+        key = ("local", local, exchange)
+        if key in seen:
+            continue
+        seen.add(key)
+        fut = Future(localSymbol=local, currency=instrument.currency or "USD")
+        if exchange:
+            fut.exchange = exchange
+        variants.append(fut)
 
     return variants

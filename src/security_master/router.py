@@ -120,6 +120,15 @@ async def resolve_pending_instruments(
     return {"status": "started", "message": "Resolution running in background"}
 
 
+@router.post("/{instrument_id}/resolve", response_model=InstrumentResponse)
+async def resolve_instrument_conid(
+    instrument_id: int,
+    service: InstrumentService = Depends(get_service),
+):
+    """Resolve IBKR conId for one instrument (e.g. a futures contract missing conId)."""
+    return await service.resolve_conid_if_missing(instrument_id)
+
+
 @router.get("/search", response_model=InstrumentSearchResponse)
 async def search_instrument(
     symbol: str = Query(...),
