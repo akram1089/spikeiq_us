@@ -10,6 +10,29 @@ from src.security_master.models import Instrument
 from src.security_master.repository import InstrumentRepository
 from src.security_master.ibkr_resolver import build_ib_contract
 
+
+def _safe_float(val):
+    if val is None:
+        return None
+    try:
+        return None if math.isnan(val) else float(val)
+    except Exception:
+        return None
+
+
+def _ticker_market_price(ticker: Ticker) -> float | None:
+    """Best available price: last → marketPrice() → close (indices often lack last/bid/ask)."""
+    price = _safe_float(ticker.last)
+    if price is not None:
+        return price
+    try:
+        price = _safe_float(ticker.marketPrice())
+        if price is not None:
+            return price
+    except Exception:
+        pass
+    return _safe_float(ticker.close)
+
 class MarketDataService:
     """Streams live market data to Kafka; IB subscriptions keyed by instrument_id."""
 
@@ -170,14 +193,8 @@ class MarketDataService:
             finally:
                 db.close()
 
-            if inst and sec_type == "FUT":
+            if inst and sec_type in ("FUT", "IND"):
                 contract = build_ib_contract(inst)
-            elif sec_type == "IND":
-                contract = Index(
-                    symbol,
-                    meta.get("exchange", "SMART"),
-                    meta.get("currency", "USD"),
-                )
             elif sec_type == "STK":
                 contract = Stock(symbol, "SMART", meta.get("currency", "USD"))
             else:
@@ -199,7 +216,8 @@ class MarketDataService:
             self.tickers[instrument_id] = ticker
             self._cache_for(instrument_id)
             logger.success(
-                f"IB market data subscription active: {meta['symbol']} (id={instrument_id})"
+                f"IB market data subscription active: {meta['symbol']} "
+                f"(id={instrument_id}, ib={getattr(contract, 'symbol', symbol)})"
             )
         except Exception as e:
             logger.error(f"Error subscribing to instrument_id={instrument_id}: {e}")
@@ -294,15 +312,7 @@ class MarketDataService:
         symbol = meta["symbol"]
         loop = self._loop
 
-        def _safe_float(val):
-            if val is None:
-                return None
-            try:
-                return None if math.isnan(val) else float(val)
-            except Exception:
-                return None
-
-        new_last = _safe_float(ticker.last)
+        new_last = _ticker_market_price(ticker)
         new_bid = _safe_float(ticker.bid)
         new_ask = _safe_float(ticker.ask)
         new_close = _safe_float(ticker.close)
@@ -313,6 +323,7 @@ class MarketDataService:
             new_last == cache.get("last")
             and new_bid == cache.get("bid")
             and new_ask == cache.get("ask")
+            and new_close == cache.get("close")
         ):
             return
 
@@ -367,7 +378,7 @@ class MarketDataService:
             high_price = _safe_float(ticker.high) or 0.0
             low_price = _safe_float(ticker.low) or 0.0
             close_price = cache.get("close") or 0.0
-            ltp = cache.get("last") or 0.0
+            ltp = cache.get("last") or close_price or 0.0
             volume = cache.get("volume") or 0
             oi = _safe_int(ticker.callOpenInterest or ticker.putOpenInterest or 0)
             change = round(ltp - close_price, 4) if ltp and close_price else 0.0
@@ -408,7 +419,7 @@ class MarketDataService:
 
         contract = self.contracts.get(instrument_id)
         con_id = contract.conId if contract else meta.get("ibkr_conid", 0)
-        ltp = cache.get("last") or 0.0
+        ltp = cache.get("last") or cache.get("close") or 0.0
         close_price = cache.get("close") or 0.0
         change = (
             round(((ltp - close_price) / close_price) * 100, 4)
