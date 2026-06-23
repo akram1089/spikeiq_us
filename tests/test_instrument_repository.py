@@ -64,3 +64,26 @@ def test_list_unresolved(db_session):
     unresolved = repo.list_unresolved(limit=10)
     assert len(unresolved) == 1
     assert unresolved[0].symbol == "TSLA"
+
+
+def test_get_by_symbol_and_asset_type(db_session):
+    repo = InstrumentRepository(db_session)
+    repo.create({"symbol": "SPX", "name": "S&P 500", "asset_type": "INDEX", "exchange": "CBOE"})
+    repo.create({"symbol": "ESU26", "name": "E-mini S&P 500", "asset_type": "FUTURE", "exchange": "CME"})
+    assert repo.get_by_symbol("SPX").asset_type == "INDEX"
+    assert repo.get_by_symbol_and_asset_type("SPX", "FUTURE") is None
+    assert repo.get_by_symbol_and_asset_type("ESU26", "FUTURE").symbol == "ESU26"
+
+
+def test_list_paginated_futures_alias_prefix(db_session):
+    repo = InstrumentRepository(db_session)
+    repo.create({"symbol": "SPX", "name": "S&P 500", "asset_type": "INDEX", "exchange": "CBOE"})
+    repo.create({"symbol": "ESU26", "name": "E-mini S&P 500", "asset_type": "FUTURE", "exchange": "CME"})
+    repo.create({"symbol": "ESH26", "name": "E-mini S&P 500", "asset_type": "FUTURE", "exchange": "CME"})
+    items, total = repo.list_paginated(
+        page=1,
+        page_size=10,
+        filters=InstrumentFilters(asset_type="FUTURE", symbol_prefix="ES"),
+    )
+    assert total == 2
+    assert {i.symbol for i in items} == {"ESU26", "ESH26"}

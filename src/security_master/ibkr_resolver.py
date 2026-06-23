@@ -10,6 +10,40 @@ MONTH_CODES = "FGHJKMNQUVXZ"
 QUARTERLY_MONTHS = {3, 6, 9, 12}  # H, M, U, Z
 QUARTERLY_ROOTS = {"ES", "MES", "NQ", "MNQ", "RTY", "YM", "ZN", "ZT"}
 
+# Index / colloquial names -> primary CME futures root (SPX is an index; /ES is the future).
+INDEX_FUTURES_ALIASES: dict[str, str] = {
+    "SPX": "ES",
+    "S&P": "ES",
+    "SNP": "ES",
+    "NDX": "NQ",
+    "NASDAQ": "NQ",
+    "NDAQ": "NQ",
+    "NAS100": "NQ",
+    "COMP": "NQ",
+    "DOW": "YM",
+    "DJIA": "YM",
+}
+
+
+def normalize_asset_type(asset_type: str | None, sec_type: str | None = None) -> str:
+    """Map API sec_type / asset_type values to canonical STOCK|ETF|INDEX|FUTURE."""
+    raw = (asset_type or sec_type or "STK").upper()
+    if raw in ("STOCK", "STK"):
+        return "STOCK"
+    if raw in ("ETF",):
+        return "ETF"
+    if raw in ("INDEX", "IND"):
+        return "INDEX"
+    if raw in ("FUTURE", "FUT"):
+        return "FUTURE"
+    return "STOCK"
+
+
+def resolve_futures_root(query: str) -> str:
+    """Return the futures product root for a search query (e.g. SPX -> ES)."""
+    clean = query.strip().upper().lstrip("/")
+    return INDEX_FUTURES_ALIASES.get(clean, clean)
+
 
 @dataclass
 class ResolvedContract:

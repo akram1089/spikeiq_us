@@ -14,6 +14,7 @@ class InstrumentFilters:
     asset_type: str | None = None
     exchange: str | None = None
     q: str | None = None
+    symbol_prefix: str | None = None
     is_active: bool | None = True
 
 
@@ -26,6 +27,15 @@ class InstrumentRepository:
 
     def get_by_symbol(self, symbol: str) -> Instrument | None:
         stmt = select(Instrument).where(Instrument.symbol == symbol.upper())
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_by_symbol_and_asset_type(
+        self, symbol: str, asset_type: str
+    ) -> Instrument | None:
+        stmt = select(Instrument).where(
+            Instrument.symbol == symbol.upper(),
+            Instrument.asset_type == asset_type.upper(),
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_by_ibkr_conid(self, ibkr_conid: int) -> Instrument | None:
@@ -43,7 +53,10 @@ class InstrumentRepository:
             stmt = stmt.where(Instrument.asset_type == filters.asset_type.upper())
         if filters.exchange:
             stmt = stmt.where(Instrument.exchange.ilike(f"%{filters.exchange.upper()}%"))
-        if filters.q:
+        if filters.symbol_prefix:
+            prefix = filters.symbol_prefix.upper()
+            stmt = stmt.where(Instrument.symbol.ilike(f"{prefix}%"))
+        elif filters.q:
             q = f"%{filters.q}%"
             stmt = stmt.where(
                 or_(

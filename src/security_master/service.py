@@ -6,7 +6,12 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from config import settings
-from src.security_master.ibkr_resolver import resolve_instrument
+from src.security_master.ibkr_resolver import (
+    INDEX_FUTURES_ALIASES,
+    normalize_asset_type,
+    resolve_futures_root,
+    resolve_instrument,
+)
 from src.security_master.mappers import publish_instrument_event, to_response
 from src.security_master.repository import InstrumentFilters, InstrumentRepository
 from src.security_master.schemas import (
@@ -42,12 +47,21 @@ class InstrumentService:
         q: str | None,
         is_active: bool | None,
     ) -> dict:
+        symbol_prefix = None
+        search_q = q
+        if q and asset_type and asset_type.upper() in ("FUTURE", "FUT"):
+            clean_q = q.strip().upper().lstrip("/")
+            if clean_q in INDEX_FUTURES_ALIASES:
+                symbol_prefix = resolve_futures_root(clean_q)
+                search_q = None
+
         filters = InstrumentFilters(
             symbol=symbol,
             name=name,
             asset_type=asset_type,
             exchange=exchange,
-            q=q,
+            q=search_q,
+            symbol_prefix=symbol_prefix,
             is_active=is_active,
         )
         items, total = self.repo.list_paginated(
@@ -93,8 +107,14 @@ class InstrumentService:
         sec_type: str | None = None,
     ) -> InstrumentSearchResponse:
         """Query catalog first; on miss resolve via IBKR and insert."""
-        query_upper = query.strip().upper()
-        inst = self.repo.get_by_symbol(query_upper)
+        query_upper = query.strip().upper().lstrip("/")
+        resolved_type = normalize_asset_type(asset_type, sec_type)
+
+        lookup_symbol = query_upper
+        if resolved_type == "FUTURE":
+            lookup_symbol = resolve_futures_root(query_upper)
+
+        inst = self.repo.get_by_symbol_and_asset_type(lookup_symbol, resolved_type)
         if inst:
             resp = to_response(inst)
             return InstrumentSearchResponse(**resp.model_dump(), source="catalog")
@@ -104,22 +124,17 @@ class InstrumentService:
 
         from ib_insync import Forex, Future, Index, Stock
 
-        sec = (asset_type or sec_type or "STK").upper()
-        clean = query_upper.lstrip("/")
+        clean = lookup_symbol
 
-        if sec in ("STOCK", "STK"):
+        if resolved_type == "STOCK":
             contract = Stock(clean, "SMART", "USD")
-            resolved_type = "STOCK"
-        elif sec in ("ETF",):
+        elif resolved_type == "ETF":
             contract = Stock(clean, "SMART", "USD")
-            resolved_type = "ETF"
-        elif sec in ("INDEX", "IND"):
+        elif resolved_type == "INDEX":
             contract = Index(clean, "CBOE", "USD")
-            resolved_type = "INDEX"
-        elif sec in ("FUTURE", "FUT"):
+        elif resolved_type == "FUTURE":
             contract = Future(clean, exchange="CME", currency="USD")
-            resolved_type = "FUTURE"
-        elif sec in ("CASH",):
+        elif (asset_type or sec_type or "").upper() in ("CASH",):
             contract = Forex(clean)
             resolved_type = "STOCK"
         else:
@@ -133,10 +148,13 @@ class InstrumentService:
         contract = qualified[0]
         details = await self.ib.reqContractDetailsAsync(contract)
         long_name = details[0].longName if details else clean
+        contract_symbol = (
+            getattr(contract, "localSymbol", None) or getattr(contract, "symbol", None) or clean
+        ).upper()
 
         inst, created = self.repo.upsert_by_symbol(
             {
-                "symbol": query_upper,
+                "symbol": contract_symbol,
                 "name": long_name,
                 "asset_type": resolved_type,
                 "exchange": contract.exchange,
