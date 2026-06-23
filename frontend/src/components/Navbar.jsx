@@ -119,7 +119,7 @@ export default function Navbar({ isConnected, onMenuClick, theme, setTheme }) {
             {gatewayConnected ? (
               <>
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} />
-                {wsClients} {wsClients === 1 ? 'CLIENT' : 'CLIENTS'}
+                CONNECTED
               </>
             ) : (
               'DISCONNECTED'

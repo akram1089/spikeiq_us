@@ -229,6 +229,22 @@ class MarketDataService:
         finally:
             db.close()
 
+    def unique_websocket_count(self) -> int:
+        """Count distinct browser WebSocket connections (not per-symbol subscriptions)."""
+        from starlette.websockets import WebSocketState
+
+        seen: set[int] = set()
+        stale: list[tuple[str, object]] = []
+        for symbol, ws_set in list(self.websockets.items()):
+            for ws in list(ws_set):
+                if getattr(ws, "client_state", None) != WebSocketState.CONNECTED:
+                    stale.append((symbol, ws))
+                    continue
+                seen.add(id(ws))
+        for symbol, ws in stale:
+            self.unregister_websocket(symbol, ws)
+        return len(seen)
+
     def register_websocket(self, symbol: str, websocket):
         symbol = symbol.upper()
         if symbol not in self.websockets:

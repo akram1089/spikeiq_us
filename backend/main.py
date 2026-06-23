@@ -64,7 +64,7 @@ _STATUS_CACHE_TTL = 30.0
 def _ws_client_count() -> int:
     if not market_data_service:
         return 0
-    return sum(len(s) for s in market_data_service.websockets.values())
+    return market_data_service.unique_websocket_count()
 sm_sync_worker: SecurityMasterSyncWorker = None
 
 @asynccontextmanager
