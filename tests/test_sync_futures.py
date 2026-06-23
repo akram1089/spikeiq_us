@@ -1,7 +1,9 @@
 import pytest
 from src.security_master.ibkr_resolver import (
+    build_ib_contract,
     generate_futures_contracts,
     normalize_asset_type,
+    parse_futures_contract_symbol,
     parse_futures_expiry,
     resolve_futures_root,
     MONTH_CODES,
@@ -12,6 +14,28 @@ def test_parse_futures_expiry():
     assert parse_futures_expiry("ESU26") == "202609"
     assert parse_futures_expiry("ESH27") == "202703"
     assert parse_futures_expiry("INVALID") == ""
+
+
+def test_parse_futures_contract_symbol():
+    assert parse_futures_contract_symbol("ESU26") == ("ES", "202609")
+    assert parse_futures_contract_symbol("MESU26") == ("MES", "202609")
+    assert parse_futures_contract_symbol("6EZ25") == ("6E", "202512")
+    assert parse_futures_contract_symbol("INVALID") == ("INVALID", "")
+
+
+def test_build_ib_contract_future_uses_root_not_full_symbol():
+    class Inst:
+        asset_type = "FUTURE"
+        symbol = "ESU26"
+        local_symbol = "ESU26"
+        exchange = "CME"
+        currency = "USD"
+
+    contract = build_ib_contract(Inst())
+    assert contract.symbol == "ES"
+    assert contract.lastTradeDateOrContractMonth == "202609"
+    assert contract.localSymbol == "ESU26"
+    assert contract.tradingClass == "ES"
 
 
 def test_generate_futures_contracts_quarterly():

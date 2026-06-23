@@ -65,31 +65,47 @@ def build_ib_contract(instrument) -> Contract:
     if asset_type == "INDEX":
         return Index(symbol, exchange, instrument.currency or "USD")
     if asset_type == "FUTURE":
-        expiry = parse_futures_expiry(symbol)
-        local = instrument.local_symbol or symbol
-        root = re.match(r"^([A-Z0-9]+)", local)
-        root_sym = root.group(1) if root else local
+        local = (instrument.local_symbol or symbol).upper()
+        root_sym, expiry = parse_futures_contract_symbol(local)
+        if not expiry and local != symbol:
+            root_sym, expiry = parse_futures_contract_symbol(symbol)
+        exchange = instrument.exchange or "CME"
         fut = Future(
             symbol=root_sym,
             lastTradeDateOrContractMonth=expiry,
             exchange=exchange,
             currency=instrument.currency or "USD",
         )
-        if instrument.local_symbol:
-            fut.localSymbol = instrument.local_symbol
+        fut.localSymbol = local
+        fut.tradingClass = root_sym
         return fut
     return Stock(symbol, exchange, instrument.currency or "USD")
 
 
-def parse_futures_expiry(contract_symbol: str) -> str:
-    """Parse ESU26 -> 202609 (YYYYMM)."""
-    match = re.match(r"^[A-Z0-9]+([FGHJKMNQUVXZ])(\d{2})$", contract_symbol.upper())
+def parse_futures_contract_symbol(contract_symbol: str) -> tuple[str, str]:
+    """Parse ESU26 -> (ES, 202609). Returns (symbol, '') when pattern does not match."""
+    sym = contract_symbol.upper().strip()
+    match = re.match(r"^(.+?)([FGHJKMNQUVXZ])(\d{2})$", sym)
     if not match:
-        return ""
-    month_code, year_suffix = match.groups()
+        return sym, ""
+    root, month_code, year_suffix = match.groups()
     month = MONTH_CODES.index(month_code) + 1
     year = 2000 + int(year_suffix)
-    return f"{year}{month:02d}"
+    return root, f"{year}{month:02d}"
+
+
+def parse_futures_expiry(contract_symbol: str) -> str:
+    """Parse ESU26 -> 202609 (YYYYMM)."""
+    _, expiry = parse_futures_contract_symbol(contract_symbol)
+    return expiry
+
+
+FUTURES_EXCHANGE_FALLBACKS: dict[str, list[str]] = {
+    "CME": ["CME", "GLOBEX"],
+    "CBOT": ["CBOT", "ECBOT"],
+    "NYMEX": ["NYMEX"],
+    "COMEX": ["COMEX"],
+}
 
 
 def generate_futures_contracts(
@@ -133,16 +149,21 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
         )
 
     try:
-        contract = build_ib_contract(instrument)
-        details_list = await ib.reqContractDetailsAsync(contract)
-        if not details_list:
-            qualified = await ib.qualifyContractsAsync(contract)
-            if not qualified:
-                logger.warning(f"No contract details for {instrument.symbol}")
-                return None
-            contract = qualified[0]
-        else:
-            contract = details_list[0].contract
+        contracts = _resolution_contract_variants(instrument)
+        contract = None
+        for candidate in contracts:
+            details_list = await ib.reqContractDetailsAsync(candidate)
+            if details_list:
+                contract = details_list[0].contract
+                break
+            qualified = await ib.qualifyContractsAsync(candidate)
+            if qualified:
+                contract = qualified[0]
+                break
+
+        if not contract:
+            logger.warning(f"No contract details for {instrument.symbol}")
+            return None
 
         return ResolvedContract(
             ibkr_conid=contract.conId,
@@ -154,3 +175,39 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
     except Exception as e:
         logger.error(f"Failed to resolve {instrument.symbol}: {e}")
         return None
+
+
+def _resolution_contract_variants(instrument) -> list[Contract]:
+    """Build IB contract candidates, including futures exchange fallbacks."""
+    base = build_ib_contract(instrument)
+    variants: list[Contract] = [base]
+    if instrument.asset_type.upper() != "FUTURE":
+        return variants
+
+    local = (instrument.local_symbol or instrument.symbol).upper()
+    root_sym, expiry = parse_futures_contract_symbol(local)
+    if not expiry:
+        return variants
+
+    primary_exchange = (instrument.exchange or "CME").upper()
+    seen: set[tuple[str, str, str]] = set()
+
+    def add_variant(exchange: str) -> None:
+        key = (root_sym, expiry, exchange)
+        if key in seen:
+            return
+        seen.add(key)
+        fut = Future(
+            symbol=root_sym,
+            lastTradeDateOrContractMonth=expiry,
+            exchange=exchange,
+            currency=instrument.currency or "USD",
+        )
+        fut.localSymbol = local
+        fut.tradingClass = root_sym
+        variants.append(fut)
+
+    for exchange in FUTURES_EXCHANGE_FALLBACKS.get(primary_exchange, [primary_exchange]):
+        add_variant(exchange)
+
+    return variants

@@ -7,7 +7,7 @@ import math
 from src.db.clickhouse_client import ch_manager, ASSET_TYPE_TO_SEC_TYPE
 from src.db.postgres import SessionLocal
 from src.security_master.models import Instrument
-from src.security_master.repository import InstrumentRepository
+from src.security_master.ibkr_resolver import build_ib_contract
 
 class MarketDataService:
     """Streams live market data to Kafka; IB subscriptions keyed by instrument_id."""
@@ -38,7 +38,9 @@ class MarketDataService:
         try:
             repo = InstrumentRepository(db)
             inst = repo.get_by_id(instrument_id)
-            if not inst or not inst.ibkr_conid:
+            if not inst:
+                return None
+            if not inst.ibkr_conid:
                 return None
             sec_type = ASSET_TYPE_TO_SEC_TYPE.get((inst.asset_type or "STOCK").upper(), "STK")
             meta = {
@@ -160,21 +162,29 @@ class MarketDataService:
         try:
             sec_type = meta.get("sec_type", "STK")
             symbol = meta.get("symbol", "")
-            exchange = meta.get("exchange", "SMART")
-            currency = meta.get("currency", "USD")
 
-            # Use proper ib_insync helper classes for contract construction
-            # (matching ibkr_resolver.build_ib_contract pattern)
-            if sec_type == "IND":
-                contract = Index(symbol, exchange, currency)
+            db = SessionLocal()
+            try:
+                inst = InstrumentRepository(db).get_by_id(instrument_id)
+            finally:
+                db.close()
+
+            if inst and sec_type == "FUT":
+                contract = build_ib_contract(inst)
+            elif sec_type == "IND":
+                contract = Index(
+                    symbol,
+                    meta.get("exchange", "SMART"),
+                    meta.get("currency", "USD"),
+                )
             elif sec_type == "STK":
-                contract = Stock(symbol, "SMART", currency)
+                contract = Stock(symbol, "SMART", meta.get("currency", "USD"))
             else:
                 contract = Contract(
                     symbol=symbol,
                     secType=sec_type,
-                    exchange=exchange,
-                    currency=currency,
+                    exchange=meta.get("exchange", "SMART"),
+                    currency=meta.get("currency", "USD"),
                 )
 
             qualified = await self.ib.qualifyContractsAsync(contract)
