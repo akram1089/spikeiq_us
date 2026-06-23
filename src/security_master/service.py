@@ -131,7 +131,9 @@ class InstrumentService:
         elif resolved_type == "ETF":
             contract = Stock(clean, "SMART", "USD")
         elif resolved_type == "INDEX":
-            contract = Index(clean, "CBOE", "USD")
+            specs = resolve_index_specs(clean, "CBOE")
+            ib_sym, ib_ex = specs[0]
+            contract = Index(ib_sym, ib_ex, "USD")
         elif resolved_type == "FUTURE":
             contract = Future(clean, exchange="GLOBEX", currency="USD")
         elif (asset_type or sec_type or "").upper() in ("CASH",):
@@ -230,7 +232,8 @@ class InstrumentService:
                 detail=(
                     f"Unable to resolve IBKR contract for {inst.symbol} "
                     f"(instrument {instrument_id}). "
-                    "Ensure IB Gateway is connected and CME futures permissions are enabled."
+                    "Ensure IB Gateway is connected. "
+                    "For indices use SPX/NDX/INDU; for futures run resolve_futures."
                 ),
             )
         inst = self.repo.update_conid(

@@ -17,6 +17,22 @@ Edit `DEFAULT_STREAM_SYMBOLS` in `docker/.env` to control the seed list (default
 
 User **Subscribe** in the UI adds one instrument at a time to the streaming catalog.
 
+## Resolve IBKR contract IDs
+
+```bash
+# All unresolved (indexes first, then futures, then stocks)
+docker exec quant_backend python -m scripts.resolve_all
+
+# By asset type
+docker exec quant_backend python -m scripts.resolve_indexes   # DJI -> INDU, etc.
+docker exec quant_backend python -m scripts.resolve_futures    # ESU26, NQU26, ...
+docker exec quant_backend python -m scripts.resolve_instrument 4  # single id
+
+curl -X POST https://spikeiq.mooo.com/api/instruments/resolve-pending
+```
+
+**Index aliases:** `DJI` / `DOW` / `DJIA` resolve to IB symbol `INDU` on CME. `SPX`→`ES` only when searching **Future** type.
+
 ## Manual sync commands
 
 ```bash

@@ -10,6 +10,21 @@ MONTH_CODES = "FGHJKMNQUVXZ"
 QUARTERLY_MONTHS = {3, 6, 9, 12}  # H, M, U, Z
 QUARTERLY_ROOTS = {"ES", "MES", "NQ", "MNQ", "RTY", "YM", "ZN", "ZT"}
 
+# Colloquial index names -> IB index symbol + exchange (DJI is not valid on IB; use INDU).
+INDEX_RESOLUTION_SPECS: dict[str, list[tuple[str, str]]] = {
+    "DJI": [("INDU", "CME")],
+    "DOW": [("INDU", "CME")],
+    "DJIA": [("INDU", "CME")],
+    "INDU": [("INDU", "CME")],
+    "SPX": [("SPX", "CBOE")],
+    "NDX": [("NDX", "NASDAQ")],
+    "COMP": [("COMP", "NASDAQ")],
+    "RUT": [("RUT", "CBOE")],
+    "VIX": [("VIX", "CBOE")],
+    "OEX": [("OEX", "CBOE")],
+    "SOX": [("SOX", "PHLX")],
+}
+
 # Index / colloquial names -> primary CME futures root (SPX is an index; /ES is the future).
 INDEX_FUTURES_ALIASES: dict[str, str] = {
     "SPX": "ES",
@@ -22,6 +37,8 @@ INDEX_FUTURES_ALIASES: dict[str, str] = {
     "COMP": "NQ",
     "DOW": "YM",
     "DJIA": "YM",
+    "DJI": "YM",
+    "INDU": "YM",
 }
 
 
@@ -54,6 +71,23 @@ class ResolvedContract:
     symbol: str
 
 
+def resolve_index_specs(symbol: str, exchange: str | None = None) -> list[tuple[str, str]]:
+    """Return IB (symbol, exchange) candidates for an index lookup."""
+    sym = symbol.strip().upper()
+    specs = list(INDEX_RESOLUTION_SPECS.get(sym, []))
+    if exchange:
+        specs.append((sym, exchange.upper()))
+    if not specs:
+        specs = [(sym, (exchange or "SMART").upper())]
+    seen: set[tuple[str, str]] = set()
+    ordered: list[tuple[str, str]] = []
+    for item in specs:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
 def build_ib_contract(instrument) -> Contract:
     """Build an IB contract from a Security Master instrument row."""
     asset_type = instrument.asset_type.upper()
@@ -63,7 +97,8 @@ def build_ib_contract(instrument) -> Contract:
     if asset_type in ("STOCK", "ETF"):
         return Stock(symbol, "SMART", instrument.currency or "USD")
     if asset_type == "INDEX":
-        return Index(symbol, exchange, instrument.currency or "USD")
+        ib_sym, ib_ex = resolve_index_specs(symbol, exchange)[0]
+        return Index(ib_sym, ib_ex, instrument.currency or "USD")
     if asset_type == "FUTURE":
         local = (instrument.local_symbol or symbol).upper()
         root_sym, expiry = parse_futures_contract_symbol(local)
@@ -118,34 +153,66 @@ async def _qualify_contract(ib: IB, candidate: Contract) -> Contract | None:
     return None
 
 
-async def _resolve_future_via_matching_symbols(
-    ib: IB, local: str, root_sym: str
+async def _resolve_via_matching_symbols(
+    ib: IB, pattern: str, sec_type: str, symbol_hint: str | None = None
 ) -> Contract | None:
-    """Fallback: search IB symbol directory for the exact futures local symbol."""
+    """Search IB symbol directory and qualify the best matching contract."""
     try:
-        descriptions = await ib.reqMatchingSymbolsAsync(local)
+        descriptions = await ib.reqMatchingSymbolsAsync(pattern)
     except Exception as e:
-        logger.debug(f"reqMatchingSymbols failed for {local}: {e}")
+        logger.debug(f"reqMatchingSymbols failed for {pattern}: {e}")
         return None
 
-    local_upper = local.upper()
+    want = sec_type.upper()
+    hint = (symbol_hint or pattern).upper()
     best: Contract | None = None
     for desc in descriptions:
         c = desc.contract
-        if (c.secType or "").upper() != "FUT":
-            continue
-        ls = (getattr(c, "localSymbol", None) or "").upper()
-        sym = (getattr(c, "symbol", None) or "").upper()
-        if ls != local_upper and sym != root_sym:
+        if (c.secType or "").upper() != want:
             continue
         qualified = await _qualify_contract(ib, c)
         if not qualified:
             continue
-        if (getattr(qualified, "localSymbol", None) or "").upper() == local_upper:
+        ib_sym = (getattr(qualified, "symbol", None) or "").upper()
+        if ib_sym == hint or (getattr(qualified, "localSymbol", None) or "").upper() == hint:
             return qualified
         if best is None:
             best = qualified
     return best
+
+
+async def _resolve_future_via_matching_symbols(
+    ib: IB, local: str, root_sym: str
+) -> Contract | None:
+    """Fallback: search IB symbol directory for the exact futures local symbol."""
+    contract = await _resolve_via_matching_symbols(ib, local, "FUT", local)
+    if contract:
+        return contract
+    if root_sym != local:
+        return await _resolve_via_matching_symbols(ib, root_sym, "FUT", root_sym)
+    return None
+
+
+async def _resolve_index(ib: IB, instrument) -> Contract | None:
+    symbol = instrument.symbol.upper()
+    for ib_sym, ib_ex in resolve_index_specs(symbol, instrument.exchange):
+        contract = await _qualify_contract(
+            ib, Index(ib_sym, ib_ex, instrument.currency or "USD")
+        )
+        if contract:
+            logger.info(f"Resolved index {symbol} as IB {ib_sym}@{ib_ex}")
+            return contract
+
+    # Try symbol search with canonical IB symbol first, then user symbol
+    patterns = [symbol]
+    if symbol in INDEX_RESOLUTION_SPECS:
+        patterns.insert(0, INDEX_RESOLUTION_SPECS[symbol][0][0])
+    for pattern in dict.fromkeys(patterns):
+        contract = await _resolve_via_matching_symbols(ib, pattern, "IND", symbol)
+        if contract:
+            logger.info(f"Resolved index {symbol} via IB symbol search ({pattern})")
+            return contract
+    return None
 
 
 def generate_futures_contracts(
@@ -190,18 +257,30 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
 
     try:
         contract = None
-        if instrument.asset_type.upper() == "FUTURE":
+        asset_type = instrument.asset_type.upper()
+
+        if asset_type == "FUTURE":
             local = (instrument.local_symbol or instrument.symbol).upper()
             root_sym, _ = parse_futures_contract_symbol(local)
             contract = await _resolve_future_via_matching_symbols(ib, local, root_sym)
             if contract:
                 logger.info(f"Resolved {instrument.symbol} via IB symbol search")
 
+        elif asset_type == "INDEX":
+            contract = await _resolve_index(ib, instrument)
+
         if not contract:
             for candidate in _resolution_contract_variants(instrument):
                 contract = await _qualify_contract(ib, candidate)
                 if contract:
                     break
+
+        if not contract and asset_type in ("STOCK", "ETF"):
+            contract = await _resolve_via_matching_symbols(
+                ib, instrument.symbol.upper(), "STK", instrument.symbol.upper()
+            )
+            if contract:
+                logger.info(f"Resolved {instrument.symbol} via IB symbol search")
 
         if not contract:
             logger.warning(
@@ -224,7 +303,17 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
 
 def _resolution_contract_variants(instrument) -> list[Contract]:
     """Build IB contract candidates, including futures exchange fallbacks."""
-    if instrument.asset_type.upper() != "FUTURE":
+    asset_type = instrument.asset_type.upper()
+    currency = instrument.currency or "USD"
+
+    if asset_type == "INDEX":
+        symbol = instrument.symbol.upper()
+        variants: list[Contract] = []
+        for ib_sym, ib_ex in resolve_index_specs(symbol, instrument.exchange):
+            variants.append(Index(ib_sym, ib_ex, currency))
+        return variants or [build_ib_contract(instrument)]
+
+    if asset_type != "FUTURE":
         return [build_ib_contract(instrument)]
 
     local = (instrument.local_symbol or instrument.symbol).upper()

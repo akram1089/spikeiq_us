@@ -11,6 +11,7 @@ INDEXES = [
     ("NDX", "NASDAQ 100 Index", "NASDAQ"),
     ("COMP", "NASDAQ Composite Index", "NASDAQ"),
     ("INDU", "Dow Jones Industrial Average", "CME"),
+    ("DJI", "Dow Jones Industrial Average", "CME"),  # IB symbol is INDU
     ("RUT", "Russell 2000 Index", "CBOE"),
     ("VIX", "CBOE Volatility Index", "CBOE"),
     ("OEX", "S&P 100", "CBOE"),

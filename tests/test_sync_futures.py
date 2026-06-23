@@ -66,3 +66,22 @@ def test_normalize_asset_type():
     assert normalize_asset_type(None, "FUT") == "FUTURE"
     assert normalize_asset_type("INDEX", None) == "INDEX"
     assert normalize_asset_type(None, "STK") == "STOCK"
+
+
+def test_resolve_index_specs_dji_maps_to_indu():
+    from src.security_master.ibkr_resolver import resolve_index_specs
+
+    assert resolve_index_specs("DJI") == [("INDU", "CME")]
+    assert resolve_index_specs("SPX") == [("SPX", "CBOE")]
+
+
+def test_build_ib_contract_dji_index():
+    class Inst:
+        asset_type = "INDEX"
+        symbol = "DJI"
+        exchange = "CBOE"
+        currency = "USD"
+
+    contract = build_ib_contract(Inst())
+    assert contract.symbol == "INDU"
+    assert contract.exchange == "CME"
