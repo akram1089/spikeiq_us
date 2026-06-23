@@ -70,7 +70,7 @@ class SecurityMasterSyncWorker(threading.Thread):
 
         asset_type = payload.get("asset_type", "STOCK").upper()
         sec_type = ASSET_TYPE_TO_SEC_TYPE.get(asset_type, "STK")
-        is_active = 1 if payload.get("is_active", True) else 0
+        stream_active = 1 if payload.get("stream_active", False) else 0
 
         client = self._db_client
         client.insert(
@@ -82,7 +82,7 @@ class SecurityMasterSyncWorker(threading.Thread):
                 sec_type,
                 payload.get("currency") or "USD",
                 payload.get("symbol", ""),
-                is_active,
+                stream_active,
             ]],
             column_names=["con_id", "symbol", "exchange", "sec_type", "currency", "name", "is_active"],
         )
@@ -91,7 +91,7 @@ class SecurityMasterSyncWorker(threading.Thread):
         )
 
         instrument_id = payload.get("instrument_id")
-        if is_active and instrument_id and self.market_data_service:
+        if stream_active and instrument_id and self.market_data_service:
             self.market_data_service.request_streaming(int(instrument_id))
 
     def stop(self):

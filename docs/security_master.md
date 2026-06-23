@@ -4,6 +4,19 @@
 
 PostgreSQL is the **source of truth** for tradable instruments. ClickHouse `instruments` is a read replica synced via Kafka `security_master_updates`.
 
+## Reset streaming (IB ticker limit / too many active instruments)
+
+IB paper accounts cap simultaneous market data lines (~100). Bulk `resolve_conids` used to mark every resolved stock as streaming.
+
+```bash
+docker exec quant_backend python -m scripts.reset_streaming_catalog
+docker restart quant_backend
+```
+
+Edit `DEFAULT_STREAM_SYMBOLS` in `docker/.env` to control the seed list (default: AAPL, MSFT, NVDA, TSLA, SPX, NDX, etc.).
+
+User **Subscribe** in the UI adds one instrument at a time to the streaming catalog.
+
 ## Manual sync commands
 
 ```bash

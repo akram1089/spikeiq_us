@@ -15,6 +15,7 @@ def publish_security_master_update(
     currency: str | None,
     is_active: bool,
     action: str,
+    stream_active: bool = False,
 ) -> None:
     payload = {
         "instrument_id": instrument_id,
@@ -24,6 +25,7 @@ def publish_security_master_update(
         "exchange": exchange,
         "currency": currency,
         "is_active": is_active,
+        "stream_active": stream_active,
         "action": action,
     }
     try:

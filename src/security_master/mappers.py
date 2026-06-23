@@ -18,7 +18,9 @@ def to_response(inst: Instrument) -> InstrumentResponse:
     )
 
 
-def publish_instrument_event(inst: Instrument, action: str) -> None:
+def publish_instrument_event(
+    inst: Instrument, action: str, *, stream_active: bool = False
+) -> None:
     from src.security_master.events import publish_security_master_update
 
     publish_security_master_update(
@@ -30,4 +32,5 @@ def publish_instrument_event(inst: Instrument, action: str) -> None:
         currency=inst.currency,
         is_active=inst.is_active,
         action=action,
+        stream_active=stream_active,
     )

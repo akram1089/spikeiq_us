@@ -320,5 +320,51 @@ class ClickHouseManager:
                 client=client,
             )
 
+    def deactivate_all_catalog_instruments(self, client=None) -> int:
+        """Mark every streaming-catalog row inactive (is_active=0). Returns count deactivated."""
+        ch = client or self.get_client()
+        rows = ch.query(
+            f"""
+            SELECT con_id, symbol, exchange, sec_type, currency, name
+            FROM {self.database}.instruments FINAL
+            WHERE is_active = 1
+            """
+        ).result_rows
+        for con_id, symbol, exchange, sec_type, currency, name in rows:
+            self.upsert_catalog_instrument(
+                con_id=int(con_id),
+                symbol=str(symbol),
+                exchange=str(exchange or "SMART"),
+                sec_type=str(sec_type or "STK"),
+                currency=str(currency or "USD"),
+                name=str(name or symbol),
+                is_active=False,
+                client=client,
+            )
+        return len(rows)
+
+    def seed_streaming_catalog(self, symbols: list[str], client=None) -> int:
+        """Activate resolved PostgreSQL instruments in the streaming catalog by symbol."""
+        from src.db.postgres import SessionLocal
+        from src.security_master.repository import InstrumentRepository
+
+        seeded = 0
+        db = SessionLocal()
+        try:
+            repo = InstrumentRepository(db)
+            for raw in symbols:
+                symbol = raw.strip().upper()
+                if not symbol:
+                    continue
+                inst = repo.get_by_symbol(symbol)
+                if not inst or not inst.ibkr_conid:
+                    logger.warning(f"Skipping stream seed for {symbol} — not resolved in PostgreSQL")
+                    continue
+                self.upsert_catalog_from_instrument(inst, client=client)
+                seeded += 1
+        finally:
+            db.close()
+        return seeded
+
 # Global instance
 ch_manager = ClickHouseManager()
