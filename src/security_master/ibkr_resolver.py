@@ -189,17 +189,19 @@ async def resolve_instrument(ib: IB, instrument) -> ResolvedContract | None:
         )
 
     try:
-        contracts = _resolution_contract_variants(instrument)
         contract = None
-        for candidate in contracts:
-            contract = await _qualify_contract(ib, candidate)
-            if contract:
-                break
-
-        if not contract and instrument.asset_type.upper() == "FUTURE":
+        if instrument.asset_type.upper() == "FUTURE":
             local = (instrument.local_symbol or instrument.symbol).upper()
             root_sym, _ = parse_futures_contract_symbol(local)
             contract = await _resolve_future_via_matching_symbols(ib, local, root_sym)
+            if contract:
+                logger.info(f"Resolved {instrument.symbol} via IB symbol search")
+
+        if not contract:
+            for candidate in _resolution_contract_variants(instrument):
+                contract = await _qualify_contract(ib, candidate)
+                if contract:
+                    break
 
         if not contract:
             logger.warning(
