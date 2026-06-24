@@ -13,5 +13,7 @@ __pycache__/
 .DS_Store
 *.db
 *.log
+.env
+docker/.env
 .tempmediaStorage/
 *.resolved

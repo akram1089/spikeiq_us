@@ -5,13 +5,24 @@ from dotenv import load_dotenv
 # Find project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Load project root .env first, then docker/.env (deploy overrides).
+# Load .env files without overriding variables already set by Docker Compose.
 _root_env = PROJECT_ROOT / ".env"
 _docker_env = PROJECT_ROOT / "docker" / ".env"
 if _root_env.exists():
     load_dotenv(dotenv_path=_root_env, override=False)
 if _docker_env.exists():
-    load_dotenv(dotenv_path=_docker_env, override=True)
+    load_dotenv(dotenv_path=_docker_env, override=False)
+
+# Fill Telegram only when still unset (compose env_file is the primary source in Docker).
+if _docker_env.exists():
+    for line in _docker_env.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") and value and not os.getenv(key, "").strip():
+            os.environ[key] = value
 
 # Interactive Brokers Connection Settings
 IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
