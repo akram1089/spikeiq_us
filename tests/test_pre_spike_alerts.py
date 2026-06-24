@@ -4,16 +4,38 @@ from src.workers import pre_spike_alert_service as service
 from src.workers.pre_spike_alert_monitor import PreSpikeAlertMonitor
 
 
-def _row(symbol, version=12345, alert_time="2026-06-23T13:14:53"):
+def _row(symbol, version=12345, alert_time="2026-06-23T13:14:53", price=30166.25):
     return {
         "alert_time": alert_time,
         "symbol": symbol,
-        "price": 30166.25,
+        "price": price,
         "signal_type": "STOCK WATCH",
         "setup": "MOMENTUM BUILDING",
         "alert_status": "HOT",
         "version": version,
     }
+
+
+def test_pre_spike_monitor_dedupes_same_symbol_second_price_ticks(monkeypatch):
+    dispatched = []
+    monitor = PreSpikeAlertMonitor()
+    monitor._bootstrapped = True
+
+    rows = [
+        _row("NDX", price=29460.21, alert_time="2026-06-24T10:39:13"),
+        _row("NDX", price=29461.93, alert_time="2026-06-24T10:39:13"),
+        _row("NDX", price=29462.10, alert_time="2026-06-24T10:39:13"),
+    ]
+    monkeypatch.setattr(monitor, "_fetch_poll_rows", lambda **kwargs: rows)
+    monkeypatch.setattr(
+        "src.workers.pre_spike_alert_monitor.dispatch_pre_spike_alert",
+        lambda alert: dispatched.append(alert),
+    )
+
+    monitor.poll_new_alerts()
+
+    assert len(dispatched) == 1
+    assert dispatched[0]["symbol"] == "NDX"
 
 
 def test_pre_spike_monitor_dispatches_all_rows_with_same_version(monkeypatch):

@@ -16,7 +16,8 @@ from src.market.pre_spike_source import (
 )
 from src.workers.pre_spike_alert_service import dispatch_pre_spike_alert
 
-AlertKey = Tuple[str, str, str, str, str, str]
+# Dedup by symbol + second + setup (ignore micro price ticks on the same event).
+AlertKey = Tuple[str, str, str, str]
 
 
 class PreSpikeAlertMonitor:
@@ -37,22 +38,21 @@ class PreSpikeAlertMonitor:
         cols = result.column_names
         return [dict(zip(cols, row)) for row in result.result_rows]
 
-    def _alert_key(self, row: Dict[str, Any]) -> AlertKey:
-        alert_time = row.get("alert_time")
+    @staticmethod
+    def _alert_time_key(alert_time: Any) -> str:
         if hasattr(alert_time, "isoformat"):
-            alert_time = alert_time.isoformat()
+            alert_time = alert_time.isoformat(sep=" ", timespec="seconds")
+        text = str(alert_time or "")
+        if len(text) >= 19:
+            return text[:19]
+        return text
 
-        price = row.get("price")
-        if hasattr(price, "as_tuple"):
-            price = str(price)
-
+    def _alert_key(self, row: Dict[str, Any]) -> AlertKey:
         return (
-            str(alert_time or ""),
+            self._alert_time_key(row.get("alert_time")),
             str(row.get("symbol") or ""),
-            str(price or ""),
             str(row.get("signal_type") or ""),
             str(row.get("setup") or ""),
-            str(row.get("alert_status") or ""),
         )
 
     def _remember(self, key: AlertKey) -> None:
@@ -62,6 +62,9 @@ class PreSpikeAlertMonitor:
         self._seen_order.append(key)
         while len(self._seen_order) > self._max_seen_keys:
             self._seen_keys.discard(self._seen_order.popleft())
+
+    def _remember_row(self, row: Dict[str, Any]) -> None:
+        self._remember(self._alert_key(row))
 
     def _fetch_poll_rows(self, *, limit: int | None = None) -> List[Dict[str, Any]]:
         db = settings.CLICKHOUSE_DB
@@ -78,16 +81,23 @@ class PreSpikeAlertMonitor:
         )
         return self._fetch_rows(sql)
 
+    def _collapse_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Keep the latest price per symbol/setup/second — avoids NDX tick spam."""
+        latest: Dict[AlertKey, Dict[str, Any]] = {}
+        for row in rows:
+            latest[self._alert_key(row)] = row
+        return list(latest.values())
+
     def bootstrap(self) -> None:
         if self._bootstrapped:
             return
         try:
-            rows = self._fetch_poll_rows()
+            rows = self._collapse_rows(self._fetch_poll_rows())
             for row in rows:
-                self._remember(self._alert_key(row))
+                self._remember_row(row)
             self._bootstrapped = True
             logger.info(
-                f"PreSpikeAlertMonitor bootstrapped with {len(rows)} row(s) from "
+                f"PreSpikeAlertMonitor bootstrapped with {len(rows)} unique event(s) from "
                 f"v_pre_spike_alerts_ui (ET lookback={self._lookback_seconds()}s). "
                 "Only newer unseen rows will alert."
             )
@@ -97,7 +107,9 @@ class PreSpikeAlertMonitor:
     def fetch_bootstrap_snapshot(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Recent watchlist rows for a newly connected WebSocket (alert_time DESC)."""
         self.bootstrap()
-        rows = self._fetch_snapshot_rows(limit=limit)
+        rows = self._collapse_rows(self._fetch_snapshot_rows(limit=limit))
+        for row in rows:
+            self._remember_row(row)
         return [normalize_pre_spike_row(row) for row in rows]
 
     def poll_new_alerts(self) -> int:
@@ -107,7 +119,7 @@ class PreSpikeAlertMonitor:
             return 0
 
         dispatched = 0
-        for row in self._fetch_poll_rows():
+        for row in self._collapse_rows(self._fetch_poll_rows()):
             key = self._alert_key(row)
             if key in self._seen_keys:
                 continue

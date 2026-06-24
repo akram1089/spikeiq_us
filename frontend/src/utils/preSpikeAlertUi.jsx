@@ -9,8 +9,25 @@ const STATUS_COLORS = {
   ACTIVE: { accent: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },
 }
 
+const TOAST_COOLDOWN_MS = 30_000
+const lastToastAtByKey = new Map()
+
+function toastDedupeKey(alert) {
+  if (!alert?.symbol) return ''
+  const t = alert.alert_time ? String(alert.alert_time).slice(0, 19) : ''
+  return `${alert.symbol}|${t}|${alert.setup || ''}`
+}
+
 export function showPreSpikeAlertToast(alert) {
   if (!alert) return
+
+  if (!alert.test) {
+    const key = toastDedupeKey(alert)
+    const lastAt = lastToastAtByKey.get(key) || 0
+    const now = Date.now()
+    if (key && now - lastAt < TOAST_COOLDOWN_MS) return
+    if (key) lastToastAtByKey.set(key, now)
+  }
 
   notifyPreSpikeAlert(alert)
 

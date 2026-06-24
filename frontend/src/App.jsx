@@ -57,7 +57,9 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return
     const onPreSpikeAlert = (event) => {
-      if (event.detail) showPreSpikeAlertToast(event.detail)
+      const row = event.detail
+      if (!row || row.test) return
+      showPreSpikeAlertToast(row)
     }
     window.addEventListener(PRE_SPIKE_ALERT_EVENT, onPreSpikeAlert)
     return () => window.removeEventListener(PRE_SPIKE_ALERT_EVENT, onPreSpikeAlert)
