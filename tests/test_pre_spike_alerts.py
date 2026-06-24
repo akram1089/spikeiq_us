@@ -22,7 +22,7 @@ def test_pre_spike_monitor_dispatches_all_rows_with_same_version(monkeypatch):
     monitor._bootstrapped = True
 
     rows = [_row("AAPL"), _row("MSFT")]
-    monkeypatch.setattr(monitor, "_fetch_recent_alerts", lambda **kwargs: rows)
+    monkeypatch.setattr(monitor, "_fetch_poll_rows", lambda **kwargs: rows)
     monkeypatch.setattr(
         "src.workers.pre_spike_alert_monitor.dispatch_pre_spike_alert",
         lambda alert: dispatched.append(alert),

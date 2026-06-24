@@ -12,7 +12,15 @@ import { showPreSpikeAlertToast } from '../utils/preSpikeAlertUi'
 import { ENABLE_PRE_SPIKE_ALERTS } from '../config/featureFlags'
 import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT } from '../utils/preSpikeAlertEvents'
 
-// Helper to format ISO timestamp to HH:MM:SS
+// Helper — calendar day in US/Eastern (matches v_pre_spike_alerts_ui alert_time)
+function getEtDateKey(ts) {
+  if (!ts) return ''
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ts))
+  } catch {
+    return ''
+  }
+}
 function formatSpikeTime(ts) {
   if (!ts) return '---'
   try {
@@ -317,6 +325,9 @@ export default function PreSpikeDashboard() {
     const symType = getSymbolType(row.symbol)
     if (selectedType !== 'ALL' && symType !== selectedType) return false
     if (timeframe === 'ALL') return true
+    if (timeframe === 'DAY') {
+      return getEtDateKey(row.alert_time) === getEtDateKey(Date.now())
+    }
     const alertMs = new Date(row.alert_time).getTime()
     if (Number.isNaN(alertMs)) return true
     const ageMs = Date.now() - alertMs
@@ -358,7 +369,6 @@ export default function PreSpikeDashboard() {
     const onSnapshot = (event) => {
       const rows = Array.isArray(event.detail) ? event.detail : []
       const filtered = rows.filter(alertMatchesFilters)
-      if (!filtered.length) return
       setPreSpikeData((prev) => ({
         ...prev,
         watchlist: filtered.slice(0, watchlistPageSize),

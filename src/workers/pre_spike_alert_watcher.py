@@ -19,8 +19,8 @@ def _watch_interval() -> float:
     return max(0.25, float(settings.PRE_SPIKE_ALERT_POLL_SECONDS))
 
 
-async def send_alert_bootstrap(websocket: Any, *, limit: int = 50) -> None:
-    """Push recent watchlist rows to a single client on connect (no Telegram/toast)."""
+async def send_alert_bootstrap(websocket: Any, *, limit: int = 100) -> None:
+    """Push v_pre_spike_alerts_ui rows (alert_time DESC) on WebSocket connect."""
     try:
         rows = await asyncio.to_thread(_monitor.fetch_bootstrap_snapshot, limit)
         await websocket.send_json({"type": "pre_spike_alert_snapshot", "data": rows})

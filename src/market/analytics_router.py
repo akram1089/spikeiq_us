@@ -14,6 +14,10 @@ from loguru import logger
 from config import settings
 from src.auth.router import get_current_user
 from src.db.clickhouse_client import ch_manager
+from src.market.pre_spike_source import (
+    PRE_SPIKE_UI_VIEW,
+    normalize_pre_spike_rows,
+)
 
 router = APIRouter(prefix="/api/market", tags=["market-analytics"])
 
@@ -446,15 +450,7 @@ async def get_pre_spike_dashboard(
         LIMIT {wl_limit} OFFSET {wl_offset}
         """
         watchlist_raw = ch_query(watchlist_query, parameters=params)
-        watchlist = []
-        for r in watchlist_raw:
-            item = {}
-            for k, v in r.items():
-                if k == "alert_time" and hasattr(v, "isoformat"):
-                    item[k] = v.isoformat()
-                else:
-                    item[k] = float(v) if hasattr(v, "as_tuple") else v
-            watchlist.append(item)
+        watchlist = normalize_pre_spike_rows(watchlist_raw)
 
         # 7. Price Spike Alerts query — paginated
         alerts_limit = max(1, alerts_page_size)
@@ -563,6 +559,7 @@ async def pre_spike_alert_config(user: dict = Depends(get_current_user)):
     return {
         "telegram_configured": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
         "delivery": "websocket",
+        "source": PRE_SPIKE_UI_VIEW,
     }
 
 

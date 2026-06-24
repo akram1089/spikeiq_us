@@ -1,7 +1,11 @@
--- Fix v_pre_spike_alerts_ui to include version (run once on VPS ClickHouse).
--- Usage:
---   docker exec -i spikeiq_clickhouse clickhouse-client --user clickhouse_user --password clickhouse_pass \
---     --multiquery < scripts/fix_pre_spike_view.sql
+-- DO NOT run on production VPS if v_pre_spike_alerts_ui already exists with the full
+-- analytics pipeline (VOLATILITY EXPANSION / INDEX LEADING setups).
+--
+-- Production uses the native view chain:
+--   v_pre_spike_alerts_ui → v_pre_spike_alerts → v_pre_spike_candidates → ...
+--
+-- Backend alerts + dashboard read v_pre_spike_alerts_ui directly.
+-- Only use this script on a fresh install that has price_spike_alerts but no pre-spike view.
 
 USE trade_analytics_us;
 
@@ -12,6 +16,5 @@ SELECT
     close AS price,
     multiIf(startsWith(symbol, '/'), 'FUTURES LEAD', symbol IN ('SPX', 'NDX', 'DJI', 'INDU', 'VIX'), 'INDEX WATCH', 'STOCK WATCH') AS signal_type,
     multiIf(confidence_score >= 8, 'Volume Surge', confidence_score >= 6, 'VWAP Breakout', 'Momentum Bounce') AS setup,
-    multiIf(confidence_score >= 8, 'HOT', confidence_score >= 6, 'WATCH', 'EARLY') AS alert_status,
-    version
+    multiIf(confidence_score >= 8, 'HOT', confidence_score >= 6, 'WATCH', 'EARLY') AS alert_status
 FROM trade_analytics_us.price_spike_alerts;
