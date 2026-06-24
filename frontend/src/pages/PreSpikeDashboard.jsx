@@ -397,7 +397,8 @@ export default function PreSpikeDashboard() {
     try {
       const res = await testPreSpikeAlert()
       const data = res.data || {}
-      if (data.alert && !data.ws_clients) {
+      // Always show toast + beep locally (WS may be offline or already echoed the alert).
+      if (data.alert) {
         showPreSpikeAlertToast(data.alert)
       }
       const tg = data.telegram_sent

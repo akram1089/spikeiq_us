@@ -56,6 +56,26 @@ export function sendBrowserNotification(title, body, opts = {}) {
 
 const SOUND_KEY = 'alertSoundEnabled'
 
+let sharedAudioCtx = null
+
+/** Unlock Web Audio after a user gesture (required by Chrome/Firefox). Call on click/tap. */
+export function unlockAlertAudio() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextClass) return false
+    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+      sharedAudioCtx = new AudioContextClass()
+    }
+    if (sharedAudioCtx.state === 'suspended') {
+      void sharedAudioCtx.resume()
+    }
+    return sharedAudioCtx.state === 'running' || sharedAudioCtx.state === 'suspended'
+  } catch (e) {
+    console.warn('Alert audio unlock failed:', e)
+    return false
+  }
+}
+
 /** Check if alert sound is enabled (defaults to true if not set) */
 export function isAlertSoundEnabled() {
   return localStorage.getItem(SOUND_KEY) !== '0'
@@ -70,13 +90,9 @@ export function setAlertSoundEnabled(enabled) {
 export function playAlertSound() {
   if (!isAlertSoundEnabled()) return
   try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext
-    if (!AudioContextClass) return
-    const audioCtx = new AudioContextClass()
-
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume()
-    }
+    unlockAlertAudio()
+    const audioCtx = sharedAudioCtx
+    if (!audioCtx) return
 
     const playTone = (freq, startTime, duration) => {
       const osc = audioCtx.createOscillator()
@@ -190,10 +206,11 @@ export function getPreSpikeAlertDisplay(alert) {
   return { title, body, emoji, status }
 }
 
-/** Play sound + browser push for a pre-spike watchlist alert. */
+/** Play sound + browser push for a pre-spike watchlist alert. Sound always plays; push if enabled. */
 export function notifyPreSpikeAlert(alert) {
   if (!alert) return false
   playAlertSound()
+  if (!isPushActive()) return false
   const { title, body } = getPreSpikeAlertDisplay(alert)
   return sendBrowserNotification(title, body, {
     tag: `trade-alert-pre-spike-${alert.symbol || 'sym'}-${alert.version || alert.alert_time || 't'}`,

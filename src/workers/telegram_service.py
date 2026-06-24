@@ -16,8 +16,21 @@ def _is_configured(bot_token: str, chat_id: str) -> bool:
     return bool(bot_token and chat_id)
 
 
+def normalize_telegram_chat_id(chat_id: str) -> str:
+    """Normalize chat_id / @channel username for Telegram API."""
+    raw = (chat_id or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("@"):
+        return raw
+    if raw.lstrip("-").isdigit():
+        return raw
+    return f"@{raw.lstrip('@')}"
+
+
 def send_telegram_message(bot_token: str, chat_id: str, message: str) -> bool:
     """Send a plain text or Markdown message via Telegram Bot API."""
+    chat_id = normalize_telegram_chat_id(chat_id)
     if not _is_configured(bot_token, chat_id):
         logger.warning("Telegram not configured (missing bot_token or chat_id)")
         return False
@@ -38,10 +51,14 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str) -> bool:
         if data.get("ok"):
             logger.info(f"✅ Telegram message sent to {chat_id}")
             return True
-        logger.error(f"Telegram API error: {data}")
+        logger.error(f"Telegram API error for chat_id={chat_id}: {data}")
+        return False
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text if e.response is not None else str(e)
+        logger.error(f"Telegram HTTP error for chat_id={chat_id}: {detail}")
         return False
     except Exception as e:
-        logger.error(f"Telegram send failed: {e}")
+        logger.error(f"Telegram send failed for chat_id={chat_id}: {e}")
         return False
 
 

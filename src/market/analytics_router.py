@@ -549,7 +549,7 @@ async def test_pre_spike_alert(user: dict = Depends(get_current_user)):
         dispatch_pre_spike_alert,
     )
 
-    result = dispatch_pre_spike_alert(build_test_pre_spike_alert())
+    result = dispatch_pre_spike_alert(build_test_pre_spike_alert(), wait_for_telegram=True)
     return {
         "ok": True,
         "message": "Test pre-spike alert dispatched",

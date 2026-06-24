@@ -54,7 +54,7 @@ export function useAlertWebSocket(enabled, onMessage) {
           if (onMessageRef.current) {
             onMessageRef.current(msg)
           }
-          if (msg.type === 'pre_spike_alert' && msg.data) {
+          if (msg.type === 'pre_spike_alert' && msg.data && !msg.data.test) {
             emitPreSpikeAlert(msg.data)
           } else if (msg.type === 'pre_spike_alert_snapshot' && Array.isArray(msg.data)) {
             emitPreSpikeAlertSnapshot(msg.data)
@@ -117,9 +117,15 @@ export function useAlertWebSocket(enabled, onMessage) {
       clearTimeout(reconnectTimeout.current)
       clearInterval(pingInterval.current)
       clearTimeout(offlineDebounce.current)
-      wsRef.current?.close()
+      const socket = wsRef.current
       wsRef.current = null
-      emitAlertWsStatus(false)
+      socket?.close()
+      offlineDebounce.current = setTimeout(() => {
+        if (!wsRef.current) {
+          setIsConnected(false)
+          emitAlertWsStatus(false)
+        }
+      }, 2000)
     }
   }, [enabled, connect])
 

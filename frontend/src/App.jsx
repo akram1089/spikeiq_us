@@ -12,8 +12,9 @@ import InstrumentsCatalog from './pages/InstrumentsCatalog'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useAlertWebSocket } from './hooks/useAlertWebSocket'
 import toast, { Toaster } from 'react-hot-toast'
-import { playAlertSound } from './utils/browserNotify'
+import { playAlertSound, unlockAlertAudio } from './utils/browserNotify'
 import { showPreSpikeAlertToast } from './utils/preSpikeAlertUi'
+import { PRE_SPIKE_ALERT_EVENT } from './utils/preSpikeAlertEvents'
 import { X } from 'lucide-react'
 
 export default function App() {
@@ -40,11 +41,27 @@ export default function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  const handleAlertWebSocketMessage = useCallback((msg) => {
-    if (msg.type === 'pre_spike_alert' && msg.data) {
-      showPreSpikeAlertToast(msg.data)
+  // Unlock alert beep on first user interaction (browser autoplay policy).
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const unlock = () => unlockAlertAudio()
+    window.addEventListener('pointerdown', unlock, { once: true, capture: true })
+    window.addEventListener('keydown', unlock, { once: true, capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock, { capture: true })
+      window.removeEventListener('keydown', unlock, { capture: true })
     }
-  }, [])
+  }, [isAuthenticated])
+
+  // Toast + beep for every live pre-spike alert (WebSocket or test button).
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const onPreSpikeAlert = (event) => {
+      if (event.detail) showPreSpikeAlertToast(event.detail)
+    }
+    window.addEventListener(PRE_SPIKE_ALERT_EVENT, onPreSpikeAlert)
+    return () => window.removeEventListener(PRE_SPIKE_ALERT_EVENT, onPreSpikeAlert)
+  }, [isAuthenticated])
 
   const handleWebSocketMessage = useCallback((msg) => {
     if (msg.type === 'price_spike_alert') {
@@ -110,7 +127,7 @@ export default function App() {
     handleWebSocketMessage
   )
 
-  useAlertWebSocket(isAuthenticated, handleAlertWebSocketMessage)
+  useAlertWebSocket(isAuthenticated)
 
   if (!isAuthenticated) {
     return (
