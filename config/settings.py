@@ -5,16 +5,13 @@ from dotenv import load_dotenv
 # Find project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Load environment variables from .env file at project root or docker folder
-dotenv_paths = [
-    PROJECT_ROOT / ".env",
-    PROJECT_ROOT / "docker" / ".env",
-]
-
-for path in dotenv_paths:
-    if path.exists():
-        load_dotenv(dotenv_path=path)
-        break
+# Load project root .env first, then docker/.env (deploy overrides).
+_root_env = PROJECT_ROOT / ".env"
+_docker_env = PROJECT_ROOT / "docker" / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env, override=False)
+if _docker_env.exists():
+    load_dotenv(dotenv_path=_docker_env, override=True)
 
 # Interactive Brokers Connection Settings
 IB_HOST = os.getenv("IB_HOST", "127.0.0.1")

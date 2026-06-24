@@ -99,6 +99,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Kafka Producer initialization failed: {e}")
 
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
+        logger.info(f"Telegram pre-spike alerts → {settings.TELEGRAM_CHAT_ID}")
+    else:
+        logger.warning(
+            "Telegram not configured — set TELEGRAM_BOT_TOKEN and "
+            "TELEGRAM_CHAT_ID in docker/.env (use @YourChannel for channels)"
+        )
+
     logger.info("Initializing connection to IB Gateway...")
     
     # Bind Uvicorn's active running loop to the thread context

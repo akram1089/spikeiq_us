@@ -22,6 +22,7 @@ sudo git clone https://github.com/akram1089/spikeiq_us.git
 cd spikeiq_us/docker
 cp .env.example .env
 nano .env   # set TWS_USERID, TWS_PASSWORD, and other secrets
+python3 ../scripts/sync_telegram_env.py   # copy TELEGRAM_* from root .env if present
 ```
 
 ## 2. Start the stack (production)
@@ -141,3 +142,4 @@ sudo ufw reload
 - **Gateway login / 2FA**: connect VNC to `127.0.0.1:5900` (SSH tunnel if remote).
 - **Conflicts with other apps**: this stack does not bind host ports 80, 443, 8000, or 5173.
 - **Remote users see blank page / Firefox `NS_BINDING_ABORTED` on JS**: host nginx must **not** use `proxy_buffering off` for `/` and `/assets/` (only for `/api/ws/`). Update from `deploy/host-nginx-spikeiq.chickenkiller.com.conf`, then `sudo nginx -t && sudo systemctl reload nginx`. Rebuild frontend so assets are served as a production build (not Vite dev).
+- **Telegram goes to bot DM instead of channel**: set `TELEGRAM_CHAT_ID=@YourChannel` in `docker/.env` (not the project root `.env` only). Run `python3 ../scripts/sync_telegram_env.py` from `docker/`, then recreate backend: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend`. Confirm in logs: `Telegram pre-spike alerts → @YourChannel`, or `GET /api/market/pre-spike/alert-config` → `telegram_chat_id`.

@@ -558,6 +558,7 @@ async def pre_spike_alert_config(user: dict = Depends(get_current_user)):
     """Return whether Telegram is configured for pre-spike alerts."""
     return {
         "telegram_configured": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
+        "telegram_chat_id": settings.TELEGRAM_CHAT_ID or None,
         "delivery": "websocket",
         "source": PRE_SPIKE_UI_VIEW,
     }

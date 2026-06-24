@@ -108,6 +108,9 @@ services:
       dockerfile: Dockerfile.backend
     container_name: quant_backend
     restart: always
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       ib-gateway:
         condition: service_started
@@ -151,8 +154,6 @@ services:
       - DEFAULT_STREAM_SYMBOLS=${DEFAULT_STREAM_SYMBOLS:-AAPL,MSFT,NVDA,TSLA,SPX,NDX,SPCX,META,GOOGL,AMZN}
       - IB_RESOLVE_CLIENT_ID=${IB_RESOLVE_CLIENT_ID:-12}
       - PYTHONUNBUFFERED=1
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - PRE_SPIKE_ALERT_POLL_SECONDS=${PRE_SPIKE_ALERT_POLL_SECONDS:-1}
       - PRE_SPIKE_ALERT_LOOKBACK_SECONDS=${PRE_SPIKE_ALERT_LOOKBACK_SECONDS:-3600}
     logging:
