@@ -14,6 +14,34 @@ from src.workers.pre_spike_alert_service import dispatch_pre_spike_alert, serial
 
 AlertKey = Tuple[int, str, str, str, str, str, str]
 
+# Query base table directly — production v_pre_spike_alerts_ui may be an older view without `version`.
+_PRE_SPIKE_ALERTS_SQL = """
+SELECT
+    event_time AS alert_time,
+    symbol,
+    close AS price,
+    multiIf(
+        startsWith(symbol, '/'),
+        'FUTURES LEAD',
+        symbol IN ('SPX', 'NDX', 'DJI', 'INDU', 'VIX'),
+        'INDEX WATCH',
+        'STOCK WATCH'
+    ) AS signal_type,
+    multiIf(
+        confidence_score >= 8,
+        'Volume Surge',
+        confidence_score >= 6,
+        'VWAP Breakout',
+        'Momentum Bounce'
+    ) AS setup,
+    multiIf(confidence_score >= 8, 'HOT', confidence_score >= 6, 'WATCH', 'EARLY') AS alert_status,
+    version
+FROM {db}.price_spike_alerts
+WHERE version >= {{min_version:UInt64}}
+ORDER BY version DESC, event_time DESC, symbol ASC
+LIMIT {row_limit}
+"""
+
 
 class PreSpikeAlertMonitor:
     """Tracks seen alert rows and dispatches only new ones to the alert WebSocket channel."""
@@ -70,20 +98,7 @@ class PreSpikeAlertMonitor:
         version = max(version, self._version_floor())
         row_limit = limit if limit is not None else self._max_seen_keys
         return self._fetch_rows(
-            f"""
-            SELECT
-                alert_time,
-                symbol,
-                price,
-                signal_type,
-                setup,
-                alert_status,
-                version
-            FROM {db}.v_pre_spike_alerts_ui
-            WHERE version >= {{min_version:UInt64}}
-            ORDER BY version DESC, alert_time DESC, symbol ASC
-            LIMIT {row_limit}
-            """,
+            _PRE_SPIKE_ALERTS_SQL.format(db=db, row_limit=row_limit),
             parameters={"min_version": version},
         )
 
