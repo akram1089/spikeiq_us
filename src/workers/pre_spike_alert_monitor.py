@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-import time
 from typing import Any, Deque, Dict, List, Tuple
 
 from loguru import logger
@@ -12,33 +11,21 @@ from config import settings
 from src.db.clickhouse_client import ch_manager
 from src.workers.pre_spike_alert_service import dispatch_pre_spike_alert, serialize_pre_spike_alert
 
-AlertKey = Tuple[int, str, str, str, str, str, str]
+# Dedup key — no version column on production v_pre_spike_alerts_ui view chain.
+AlertKey = Tuple[str, str, str, str, str, str]
 
-# Query base table directly — production v_pre_spike_alerts_ui may be an older view without `version`.
-_PRE_SPIKE_ALERTS_SQL = """
+# Watch the same source as the Pre-Spike dashboard (not price_spike_alerts).
+_PRE_SPIKE_UI_SQL = """
 SELECT
-    event_time AS alert_time,
+    alert_time,
     symbol,
-    close AS price,
-    multiIf(
-        startsWith(symbol, '/'),
-        'FUTURES LEAD',
-        symbol IN ('SPX', 'NDX', 'DJI', 'INDU', 'VIX'),
-        'INDEX WATCH',
-        'STOCK WATCH'
-    ) AS signal_type,
-    multiIf(
-        confidence_score >= 8,
-        'Volume Surge',
-        confidence_score >= 6,
-        'VWAP Breakout',
-        'Momentum Bounce'
-    ) AS setup,
-    multiIf(confidence_score >= 8, 'HOT', confidence_score >= 6, 'WATCH', 'EARLY') AS alert_status,
-    version
-FROM {db}.price_spike_alerts
-WHERE version >= {{min_version:UInt64}}
-ORDER BY version DESC, event_time DESC, symbol ASC
+    price,
+    signal_type,
+    setup,
+    alert_status
+FROM {db}.v_pre_spike_alerts_ui
+WHERE alert_time >= now() - INTERVAL {lookback_sec} SECOND
+ORDER BY alert_time ASC, symbol ASC
 LIMIT {row_limit}
 """
 
@@ -47,17 +34,13 @@ class PreSpikeAlertMonitor:
     """Tracks seen alert rows and dispatches only new ones to the alert WebSocket channel."""
 
     def __init__(self):
-        self._last_version = 0
         self._bootstrapped = False
         self._seen_keys: set[AlertKey] = set()
         self._seen_order: Deque[AlertKey] = deque()
         self._max_seen_keys = 2000
 
     def _lookback_seconds(self) -> int:
-        return max(5, int(settings.PRE_SPIKE_ALERT_LOOKBACK_SECONDS))
-
-    def _version_floor(self) -> int:
-        return max(0, int((time.time() - self._lookback_seconds()) * 1000))
+        return max(60, int(settings.PRE_SPIKE_ALERT_LOOKBACK_SECONDS))
 
     def _fetch_rows(self, sql: str, parameters: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
         client = ch_manager.create_worker_client()
@@ -75,7 +58,6 @@ class PreSpikeAlertMonitor:
             price = str(price)
 
         return (
-            int(row.get("version") or 0),
             str(alert_time or ""),
             str(row.get("symbol") or ""),
             str(price or ""),
@@ -92,14 +74,15 @@ class PreSpikeAlertMonitor:
         while len(self._seen_order) > self._max_seen_keys:
             self._seen_keys.discard(self._seen_order.popleft())
 
-    def _fetch_recent_alerts(self, *, min_version: int | None = None, limit: int | None = None) -> List[Dict[str, Any]]:
+    def _fetch_recent_alerts(self, *, limit: int | None = None) -> List[Dict[str, Any]]:
         db = settings.CLICKHOUSE_DB
-        version = self._last_version if min_version is None else min_version
-        version = max(version, self._version_floor())
         row_limit = limit if limit is not None else self._max_seen_keys
         return self._fetch_rows(
-            _PRE_SPIKE_ALERTS_SQL.format(db=db, row_limit=row_limit),
-            parameters={"min_version": version},
+            _PRE_SPIKE_UI_SQL.format(
+                db=db,
+                lookback_sec=self._lookback_seconds(),
+                row_limit=row_limit,
+            ),
         )
 
     def bootstrap(self) -> None:
@@ -109,11 +92,11 @@ class PreSpikeAlertMonitor:
             rows = self._fetch_recent_alerts()
             for row in rows:
                 self._remember(self._alert_key(row))
-                self._last_version = max(self._last_version, int(row.get("version") or 0))
             self._bootstrapped = True
             logger.info(
-                f"PreSpikeAlertMonitor bootstrapped with {len(rows)} recent row(s); "
-                f"latest version={self._last_version}. Only newer unseen rows will alert."
+                f"PreSpikeAlertMonitor bootstrapped with {len(rows)} recent row(s) from "
+                f"v_pre_spike_alerts_ui (lookback={self._lookback_seconds()}s). "
+                "Only newer unseen rows will alert."
             )
         except Exception as e:
             logger.warning(f"PreSpikeAlertMonitor bootstrap failed (will retry): {e}")
@@ -121,8 +104,8 @@ class PreSpikeAlertMonitor:
     def fetch_bootstrap_snapshot(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Recent watchlist rows for a newly connected WebSocket client (no dispatch)."""
         self.bootstrap()
-        rows = self._fetch_recent_alerts(min_version=self._version_floor(), limit=limit)
-        return [serialize_pre_spike_alert(row) for row in rows]
+        rows = self._fetch_recent_alerts(limit=limit)
+        return [serialize_pre_spike_alert(row) for row in reversed(rows)]
 
     def poll_new_alerts(self) -> int:
         """Check ClickHouse once for new rows; returns count dispatched."""
@@ -132,7 +115,7 @@ class PreSpikeAlertMonitor:
 
         dispatched = 0
         rows = self._fetch_recent_alerts()
-        for row in reversed(rows):
+        for row in rows:
             key = self._alert_key(row)
             if key in self._seen_keys:
                 continue
@@ -140,6 +123,5 @@ class PreSpikeAlertMonitor:
             alert = serialize_pre_spike_alert(row)
             dispatch_pre_spike_alert(alert)
             self._remember(key)
-            self._last_version = max(self._last_version, int(row.get("version") or 0))
             dispatched += 1
         return dispatched
