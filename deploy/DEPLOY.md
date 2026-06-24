@@ -1,6 +1,6 @@
 # SpikeIQ US — VPS Deployment Guide
 
-Deploy to **https://spikeiq.mooo.com/** alongside existing Docker apps without disrupting them.
+Deploy to **https://spikeiq.chickenkiller.com/** alongside existing Docker apps without disrupting them.
 
 ## Architecture
 
@@ -39,22 +39,22 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 
 ## 3. Point the domain (host nginx)
 
-If nginx already serves other sites on the VPS, add the snippet from `deploy/host-nginx-spikeiq.mooo.com.conf`:
+If nginx already serves other sites on the VPS, add the snippet from `deploy/host-nginx-spikeiq.chickenkiller.com.conf`:
 
 ```bash
-sudo cp /opt/spikeiq_us/deploy/host-nginx-spikeiq.mooo.com.conf /etc/nginx/sites-available/spikeiq.mooo.com
-sudo ln -s /etc/nginx/sites-available/spikeiq.mooo.com /etc/nginx/sites-enabled/
+sudo cp /opt/spikeiq_us/deploy/host-nginx-spikeiq.chickenkiller.com.conf /etc/nginx/sites-available/spikeiq.chickenkiller.com
+sudo ln -s /etc/nginx/sites-available/spikeiq.chickenkiller.com /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Ensure DNS for `spikeiq.mooo.com` points to your VPS IP.
+Ensure DNS for `spikeiq.chickenkiller.com` points to your VPS IP.
 
 ## 4. Enable HTTPS (Let's Encrypt)
 
 Your VPS already uses Certbot for other sites. Add SSL for SpikeIQ:
 
 ```bash
-sudo certbot --nginx -d spikeiq.mooo.com
+sudo certbot --nginx -d spikeiq.chickenkiller.com
 ```
 
 When prompted:
@@ -65,19 +65,19 @@ When prompted:
 Verify:
 
 ```bash
-curl -s https://spikeiq.mooo.com/api/status
+curl -s https://spikeiq.chickenkiller.com/api/status
 sudo certbot renew --dry-run
 ```
 
-Certbot auto-renews. It updates `/etc/nginx/sites-available/spikeiq.mooo.com` with SSL and does not affect other vhosts.
+Certbot auto-renews. It updates `/etc/nginx/sites-available/spikeiq.chickenkiller.com` with SSL and does not affect other vhosts.
 
 **Important — WebSocket / Market Stream LIVE:** After `certbot --nginx`, open the HTTPS `server { listen 443 ssl; ... }` block and confirm it includes the same WebSocket proxy headers as the HTTP block (`Upgrade`, `Connection $connection_upgrade`, `proxy_read_timeout 86400`). Without these, the dashboard shows **Market Stream OFFLINE** while ticks still ingest to ClickHouse.
 
 ```bash
-sudo nginx -T | grep -A 30 "server_name spikeiq.mooo.com"
+sudo nginx -T | grep -A 30 "server_name spikeiq.chickenkiller.com"
 ```
 
-If the `443` block is missing upgrade headers, copy them from `deploy/host-nginx-spikeiq.mooo.com.conf` (see the HTTPS comment at the bottom), then:
+If the `443` block is missing upgrade headers, copy them from `deploy/host-nginx-spikeiq.chickenkiller.com.conf` (see the HTTPS comment at the bottom), then:
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
@@ -106,16 +106,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 SpikeIQ ClickHouse uses host port **8126** (not 8123) to avoid conflicting with other products.
 
 ```bash
-sudo cp ~/spikeiq_us/deploy/host-nginx-ch.spikeiq.mooo.com.conf \
-  /etc/nginx/sites-available/ch.spikeiq.mooo.com
-sudo ln -sf /etc/nginx/sites-available/ch.spikeiq.mooo.com /etc/nginx/sites-enabled/
+sudo cp ~/spikeiq_us/deploy/host-nginx-ch.spikeiq.chickenkiller.com.conf \
+  /etc/nginx/sites-available/ch.spikeiq.chickenkiller.com
+sudo ln -sf /etc/nginx/sites-available/ch.spikeiq.chickenkiller.com /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d ch.spikeiq.mooo.com
+sudo certbot --nginx -d ch.spikeiq.chickenkiller.com
 ```
 
-Add DNS: `ch.spikeiq.mooo.com` → VPS IP.
+Add DNS: `ch.spikeiq.chickenkiller.com` → VPS IP.
 
-Open **https://ch.spikeiq.mooo.com/play** (or `http://YOUR_VPS_IP:8126/play`) and log in with `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` from `docker/.env`.
+Open **https://ch.spikeiq.chickenkiller.com/play** (or `http://YOUR_VPS_IP:8126/play`) and log in with `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` from `docker/.env`.
 
 If port 8126 times out from your PC, open the firewall on the VPS:
 
@@ -140,4 +140,4 @@ sudo ufw reload
 - **502 Bad Gateway**: wait for `ib-gateway` and `backend` to become healthy (`docker compose ps`).
 - **Gateway login / 2FA**: connect VNC to `127.0.0.1:5900` (SSH tunnel if remote).
 - **Conflicts with other apps**: this stack does not bind host ports 80, 443, 8000, or 5173.
-- **Remote users see blank page / Firefox `NS_BINDING_ABORTED` on JS**: host nginx must **not** use `proxy_buffering off` for `/` and `/assets/` (only for `/api/ws/`). Update from `deploy/host-nginx-spikeiq.mooo.com.conf`, then `sudo nginx -t && sudo systemctl reload nginx`. Rebuild frontend so assets are served as a production build (not Vite dev).
+- **Remote users see blank page / Firefox `NS_BINDING_ABORTED` on JS**: host nginx must **not** use `proxy_buffering off` for `/` and `/assets/` (only for `/api/ws/`). Update from `deploy/host-nginx-spikeiq.chickenkiller.com.conf`, then `sudo nginx -t && sudo systemctl reload nginx`. Rebuild frontend so assets are served as a production build (not Vite dev).

@@ -1,7 +1,7 @@
 # SpikeIQ US — Trade Analytics Platform
 
 GitHub: [akram1089/spikeiq_us](https://github.com/akram1089/spikeiq_us)  
-Production domain: [http://spikeiq.mooo.com/](http://spikeiq.mooo.com/)
+Production domain: [https://spikeiq.chickenkiller.com/](https://spikeiq.chickenkiller.com/)
 
 This project establishes a complete local development and testing environment for integrating with Interactive Brokers (IB) Gateway. It uses Docker Compose to run the IB Gateway, Python 3.12, and the `ib_insync` library to validate connections, retrieve account information, check contracts, fetch historical candlesticks, and stream real-time ticks and bars.
 

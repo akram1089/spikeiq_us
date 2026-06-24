@@ -23,7 +23,7 @@ export default defineConfig({
   },
   server: {
     host: true,
-    allowedHosts: ['spikeiq.mooo.com', 'localhost'],
+    allowedHosts: ['spikeiq.chickenkiller.com', 'localhost'],
     proxy: {
       '/api': {
         target: 'http://backend:8000',
@@ -35,6 +35,6 @@ export default defineConfig({
   preview: {
     host: true,
     port: 5173,
-    allowedHosts: ['spikeiq.mooo.com', 'localhost'],
+    allowedHosts: ['spikeiq.chickenkiller.com', 'localhost'],
   },
 })

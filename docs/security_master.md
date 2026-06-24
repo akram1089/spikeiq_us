@@ -28,7 +28,7 @@ docker exec quant_backend python -m scripts.resolve_indexes   # DJI -> INDU, etc
 docker exec quant_backend python -m scripts.resolve_futures    # ESU26, NQU26, ...
 docker exec quant_backend python -m scripts.resolve_instrument 4  # single id
 
-curl -X POST https://spikeiq.mooo.com/api/instruments/resolve-pending
+curl -X POST https://spikeiq.chickenkiller.com/api/instruments/resolve-pending
 ```
 
 **Index aliases:** `DJI` / `DOW` / `DJIA` resolve to IB symbol `INDU` on CME. `SPX`→`ES` only when searching **Future** type.
@@ -51,7 +51,7 @@ docker exec quant_backend python -m scripts.sync_futures
 docker exec quant_scheduler python -m scripts.resolve_conids
 
 # Preferred: reuse backend IB session (no client-id conflict)
-curl -X POST https://spikeiq.mooo.com/api/instruments/resolve-pending
+curl -X POST https://spikeiq.chickenkiller.com/api/instruments/resolve-pending
 ```
 
 ## Autonomous streaming
