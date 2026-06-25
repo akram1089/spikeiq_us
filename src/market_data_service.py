@@ -277,6 +277,23 @@ class MarketDataService:
             self.unregister_websocket(symbol, ws)
         return len(seen)
 
+    def snapshot_live_prices(self, symbols: set[str] | list[str] | None = None) -> list[dict]:
+        """Return latest cached LTP per symbol for alert WebSocket snapshots."""
+        want = {s.upper() for s in symbols} if symbols else None
+        out: list[dict] = []
+        for instrument_id, meta in self.instrument_meta.items():
+            symbol = (meta.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            if want is not None and symbol not in want:
+                continue
+            cache = self.cache.get(instrument_id, {})
+            ltp = cache.get("last") or cache.get("close")
+            if ltp is None or ltp <= 0:
+                continue
+            out.append({"symbol": symbol, "price": round(float(ltp), 4)})
+        return out
+
     def register_websocket(self, symbol: str, websocket):
         try:
             loop = asyncio.get_running_loop()
@@ -469,6 +486,13 @@ class MarketDataService:
         }
 
         ws_clients = self.websockets.get(symbol, set())
+        if ltp and ltp > 0:
+            try:
+                from src.workers.pre_spike_alert_service import maybe_broadcast_symbol_price
+                maybe_broadcast_symbol_price(symbol, float(ltp), ts_str)
+            except Exception:
+                pass
+
         if not loop or not ws_clients:
             return
 

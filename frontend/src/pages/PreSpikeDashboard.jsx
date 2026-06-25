@@ -10,7 +10,7 @@ import { showPreSpikeAlertToast } from '../utils/preSpikeAlertUi'
 // currently returns 0 rows and causes unnecessary CPU load (~681 queries, avg 2s, max 8.9s).
 // Re-enable in config/featureFlags.js when the view chain is producing data.
 import { ENABLE_PRE_SPIKE_ALERTS } from '../config/featureFlags'
-import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT } from '../utils/preSpikeAlertEvents'
+import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT, PRE_SPIKE_PRICE_EVENT, PRE_SPIKE_PRICE_SNAPSHOT_EVENT, emitAlertWatchSymbols } from '../utils/preSpikeAlertEvents'
 
 // Helper — calendar day in US/Eastern (matches v_pre_spike_alerts_ui alert_time)
 function getEtDateKey(ts) {
@@ -354,6 +354,43 @@ export default function PreSpikeDashboard() {
     return next
   }, [])
 
+  const applyLivePrices = useCallback((priceRows) => {
+    if (!Array.isArray(priceRows) || priceRows.length === 0) return
+    const bySymbol = {}
+    for (const row of priceRows) {
+      const sym = String(row?.symbol || '').toUpperCase()
+      const price = Number(row?.price)
+      if (sym && Number.isFinite(price) && price > 0) {
+        bySymbol[sym] = price
+      }
+    }
+    if (!Object.keys(bySymbol).length) return
+
+    setPreSpikeData((prev) => ({
+      ...prev,
+      watchlist: (prev.watchlist || []).map((item) => {
+        const sym = String(item.symbol || '').toUpperCase()
+        return bySymbol[sym] != null ? { ...item, price: bySymbol[sym] } : item
+      }),
+    }))
+    setSpikeAlerts((prev) =>
+      (prev || []).map((item) => {
+        const sym = String(item.symbol || '').toUpperCase()
+        return bySymbol[sym] != null ? { ...item, price: bySymbol[sym] } : item
+      })
+    )
+  }, [])
+
+  useEffect(() => {
+    const symbols = [
+      ...(preSpikeData.watchlist || []).map((r) => r.symbol),
+      ...(spikeAlerts || []).map((r) => r.symbol),
+    ]
+    if (symbols.length) {
+      emitAlertWatchSymbols(symbols)
+    }
+  }, [preSpikeData.watchlist, spikeAlerts])
+
   useEffect(() => {
     const onLiveAlert = (event) => {
       const row = event.detail
@@ -386,15 +423,26 @@ export default function PreSpikeDashboard() {
     const onWsStatus = (event) => {
       setAlertWsLive(Boolean(event.detail?.connected))
     }
+    const onLivePrice = (event) => {
+      const row = event.detail
+      if (row?.symbol) applyLivePrices([row])
+    }
+    const onPriceSnapshot = (event) => {
+      applyLivePrices(event.detail)
+    }
     window.addEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
     window.addEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
     window.addEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
+    window.addEventListener(PRE_SPIKE_PRICE_EVENT, onLivePrice)
+    window.addEventListener(PRE_SPIKE_PRICE_SNAPSHOT_EVENT, onPriceSnapshot)
     return () => {
       window.removeEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
       window.removeEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
       window.removeEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
+      window.removeEventListener(PRE_SPIKE_PRICE_EVENT, onLivePrice)
+      window.removeEventListener(PRE_SPIKE_PRICE_SNAPSHOT_EVENT, onPriceSnapshot)
     }
-  }, [alertMatchesFilters, bumpKpisForAlert, watchlistPageSize])
+  }, [alertMatchesFilters, bumpKpisForAlert, watchlistPageSize, applyLivePrices])
 
   useEffect(() => {
     getPreSpikeAlertConfig()

@@ -95,3 +95,28 @@ def test_dispatch_uses_dedicated_alert_websocket(monkeypatch):
     assert calls == [("alert_ws", "pre_spike_alert")]
     assert result["alert_ws_clients"] == 2
     assert result["legacy_ws_clients"] == 0
+
+
+def test_maybe_broadcast_symbol_price_uses_separate_message_type(monkeypatch):
+    sent = []
+    monkeypatch.setattr(service, "alert_websocket_count", lambda: 1)
+    monkeypatch.setattr(service, "broadcast_alert_websockets", lambda msg: sent.append(msg) or 1)
+
+    count = service.maybe_broadcast_symbol_price("NDX", 29350.01, "2026-06-24T10:20:42Z")
+
+    assert count == 1
+    assert sent == [{
+        "type": "symbol_price",
+        "data": {"symbol": "NDX", "price": 29350.01, "ts": "2026-06-24T10:20:42Z"},
+    }]
+
+
+def test_maybe_broadcast_symbol_price_skips_without_clients(monkeypatch):
+    monkeypatch.setattr(service, "alert_websocket_count", lambda: 0)
+    monkeypatch.setattr(
+        service,
+        "broadcast_alert_websockets",
+        lambda msg: (_ for _ in ()).throw(AssertionError("should not broadcast")),
+    )
+
+    assert service.maybe_broadcast_symbol_price("NDX", 100.0) == 0

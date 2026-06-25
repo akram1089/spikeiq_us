@@ -19,14 +19,16 @@ def _watch_interval() -> float:
     return max(0.25, float(settings.PRE_SPIKE_ALERT_POLL_SECONDS))
 
 
-async def send_alert_bootstrap(websocket: Any, *, limit: int = 100) -> None:
+async def send_alert_bootstrap(websocket: Any, *, limit: int = 100) -> list[dict]:
     """Push v_pre_spike_alerts_ui rows (alert_time DESC) on WebSocket connect."""
     try:
         rows = await asyncio.to_thread(_monitor.fetch_bootstrap_snapshot, limit)
         await websocket.send_json({"type": "pre_spike_alert_snapshot", "data": rows})
         logger.info(f"Sent pre-spike bootstrap snapshot with {len(rows)} row(s)")
+        return rows
     except Exception as e:
         logger.warning(f"Failed to send pre-spike bootstrap snapshot: {e}")
+        return []
 
 
 async def ensure_alert_stream_running() -> None:
