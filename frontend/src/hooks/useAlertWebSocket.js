@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { emitPreSpikeAlert, emitPreSpikeAlertSnapshot, emitAlertWsStatus, emitSymbolPrice, emitSymbolPriceSnapshot, ALERT_WATCH_SYMBOLS_EVENT } from '../utils/preSpikeAlertEvents'
+import {
+  emitPreSpikeAlert,
+  emitPreSpikeAlertSnapshot,
+  emitAlertWsStatus,
+  emitPriceSpikeRecord,
+  emitPriceSpikeSnapshot,
+} from '../utils/preSpikeAlertEvents'
 
 function buildAlertWsUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -21,27 +27,9 @@ export function useAlertWebSocket(enabled, onMessage) {
   const maxReconnectAttempts = 20
 
   const onMessageRef = useRef(onMessage)
-  const pendingWatchSymbols = useRef(null)
   useEffect(() => {
     onMessageRef.current = onMessage
   }, [onMessage])
-
-  const sendWatchSymbols = useCallback((symbols) => {
-    const list = [...new Set((symbols || []).map((s) => String(s).trim().toUpperCase()).filter(Boolean))]
-    if (!list.length) return
-    pendingWatchSymbols.current = list
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'watch_symbols', symbols: list }))
-      pendingWatchSymbols.current = null
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!enabled) return undefined
-    const onWatch = (event) => sendWatchSymbols(event.detail)
-    window.addEventListener(ALERT_WATCH_SYMBOLS_EVENT, onWatch)
-    return () => window.removeEventListener(ALERT_WATCH_SYMBOLS_EVENT, onWatch)
-  }, [enabled, sendWatchSymbols])
 
   const connect = useCallback(() => {
     if (!enabled) return
@@ -58,10 +46,6 @@ export function useAlertWebSocket(enabled, onMessage) {
         setIsConnected(true)
         emitAlertWsStatus(true)
         reconnectAttempts.current = 0
-        if (pendingWatchSymbols.current?.length) {
-          wsRef.current.send(JSON.stringify({ type: 'watch_symbols', symbols: pendingWatchSymbols.current }))
-          pendingWatchSymbols.current = null
-        }
         clearInterval(pingInterval.current)
         pingInterval.current = setInterval(() => {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -80,10 +64,10 @@ export function useAlertWebSocket(enabled, onMessage) {
             emitPreSpikeAlert(msg.data)
           } else if (msg.type === 'pre_spike_alert_snapshot' && Array.isArray(msg.data)) {
             emitPreSpikeAlertSnapshot(msg.data)
-          } else if (msg.type === 'symbol_price' && msg.data?.symbol) {
-            emitSymbolPrice(msg.data)
-          } else if (msg.type === 'symbol_price_snapshot' && Array.isArray(msg.data)) {
-            emitSymbolPriceSnapshot(msg.data)
+          } else if (msg.type === 'price_spike_record' && msg.data) {
+            emitPriceSpikeRecord(msg.data)
+          } else if (msg.type === 'price_spike_snapshot' && Array.isArray(msg.data)) {
+            emitPriceSpikeSnapshot(msg.data)
           }
         } catch (e) {
           console.error('Alert WebSocket parse error:', e)

@@ -97,26 +97,19 @@ def test_dispatch_uses_dedicated_alert_websocket(monkeypatch):
     assert result["legacy_ws_clients"] == 0
 
 
-def test_maybe_broadcast_symbol_price_uses_separate_message_type(monkeypatch):
+def test_dispatch_price_spike_record_is_websocket_only(monkeypatch):
     sent = []
-    monkeypatch.setattr(service, "alert_websocket_count", lambda: 1)
     monkeypatch.setattr(service, "broadcast_alert_websockets", lambda msg: sent.append(msg) or 1)
 
-    count = service.maybe_broadcast_symbol_price("NDX", 29350.01, "2026-06-24T10:20:42Z")
+    row = {
+        "event_start": "2026-06-24T10:20:42",
+        "symbol": "NDX",
+        "price": 29350.01,
+        "action": "BUY",
+        "quality": "C",
+        "setup": "👀 BUILDING",
+    }
+    result = service.dispatch_price_spike_record(row)
 
-    assert count == 1
-    assert sent == [{
-        "type": "symbol_price",
-        "data": {"symbol": "NDX", "price": 29350.01, "ts": "2026-06-24T10:20:42Z"},
-    }]
-
-
-def test_maybe_broadcast_symbol_price_skips_without_clients(monkeypatch):
-    monkeypatch.setattr(service, "alert_websocket_count", lambda: 0)
-    monkeypatch.setattr(
-        service,
-        "broadcast_alert_websockets",
-        lambda msg: (_ for _ in ()).throw(AssertionError("should not broadcast")),
-    )
-
-    assert service.maybe_broadcast_symbol_price("NDX", 100.0) == 0
+    assert result["ws_clients"] == 1
+    assert sent == [{"type": "price_spike_record", "data": row}]

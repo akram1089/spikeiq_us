@@ -142,43 +142,16 @@ def _send_pre_spike_telegram_task(token: str, chat_id: str, payload: Dict[str, A
         return False
 
 
-def maybe_broadcast_symbol_price(symbol: str, price: float, ts: str | None = None) -> int:
-    """Push live price to alert WebSocket clients (separate from pre-spike alert dispatch)."""
-    if not symbol or not price or price <= 0:
-        return 0
-    if alert_websocket_count() <= 0:
-        return 0
-    msg = {
-        "type": "symbol_price",
-        "data": {
-            "symbol": symbol.upper(),
-            "price": round(float(price), 4),
-            "ts": ts,
-        },
-    }
-    return broadcast_alert_websockets(msg)
-
-
-def ensure_symbols_streaming(symbols: set[str] | list[str]) -> None:
-    """Request IB market data for dashboard symbols (does not affect alert dispatch)."""
-    mds = _market_data_service
-    if not mds:
-        return
-    for raw in symbols:
-        sym = (raw or "").strip().upper()
-        if sym:
-            mds.request_streaming_by_symbol(sym)
-
-
-async def send_alert_price_snapshot(websocket: Any, symbols: set[str] | None = None) -> None:
-    """Send cached live prices for dashboard symbols on alert WebSocket connect."""
-    mds = _market_data_service
-    if not mds:
-        return
-    prices = mds.snapshot_live_prices(symbols)
-    if not prices:
-        return
-    await websocket.send_json({"type": "symbol_price_snapshot", "data": prices})
+def dispatch_price_spike_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Push a new v_price_spikes row to alert WebSocket clients (no Telegram)."""
+    payload = serialize_pre_spike_alert(record)
+    msg = {"type": "price_spike_record", "data": payload}
+    ws_clients = broadcast_alert_websockets(msg)
+    logger.info(
+        f"Price spike record dispatched symbol={payload.get('symbol')} "
+        f"alert_ws_clients={ws_clients}"
+    )
+    return {"ws_clients": ws_clients, "record": payload}
 
 
 def dispatch_pre_spike_alert(

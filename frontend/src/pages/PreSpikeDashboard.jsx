@@ -10,7 +10,7 @@ import { showPreSpikeAlertToast } from '../utils/preSpikeAlertUi'
 // currently returns 0 rows and causes unnecessary CPU load (~681 queries, avg 2s, max 8.9s).
 // Re-enable in config/featureFlags.js when the view chain is producing data.
 import { ENABLE_PRE_SPIKE_ALERTS } from '../config/featureFlags'
-import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT, PRE_SPIKE_PRICE_EVENT, PRE_SPIKE_PRICE_SNAPSHOT_EVENT, emitAlertWatchSymbols } from '../utils/preSpikeAlertEvents'
+import { PRE_SPIKE_ALERT_EVENT, PRE_SPIKE_ALERT_SNAPSHOT_EVENT, ALERT_WS_STATUS_EVENT, PRICE_SPIKE_RECORD_EVENT, PRICE_SPIKE_SNAPSHOT_EVENT } from '../utils/preSpikeAlertEvents'
 
 // Helper — calendar day in US/Eastern (matches v_pre_spike_alerts_ui alert_time)
 function getEtDateKey(ts) {
@@ -354,42 +354,29 @@ export default function PreSpikeDashboard() {
     return next
   }, [])
 
-  const applyLivePrices = useCallback((priceRows) => {
-    if (!Array.isArray(priceRows) || priceRows.length === 0) return
-    const bySymbol = {}
-    for (const row of priceRows) {
-      const sym = String(row?.symbol || '').toUpperCase()
-      const price = Number(row?.price)
-      if (sym && Number.isFinite(price) && price > 0) {
-        bySymbol[sym] = price
-      }
+  const spikeMatchesFilters = useCallback((row) => {
+    if (!row?.symbol) return false
+    if (selectedSymbol !== 'ALL' && row.symbol !== selectedSymbol) return false
+    const symType = getSymbolType(row.symbol)
+    if (selectedType !== 'ALL' && symType !== selectedType) return false
+    const action = String(row.action || 'HOLD').toUpperCase().trim()
+    if (spikeAlertsTab !== 'ALL' && action !== spikeAlertsTab) return false
+    if (timeframe === 'ALL') return true
+    if (timeframe === 'DAY') {
+      return getEtDateKey(row.event_start) === getEtDateKey(Date.now())
     }
-    if (!Object.keys(bySymbol).length) return
-
-    setPreSpikeData((prev) => ({
-      ...prev,
-      watchlist: (prev.watchlist || []).map((item) => {
-        const sym = String(item.symbol || '').toUpperCase()
-        return bySymbol[sym] != null ? { ...item, price: bySymbol[sym] } : item
-      }),
-    }))
-    setSpikeAlerts((prev) =>
-      (prev || []).map((item) => {
-        const sym = String(item.symbol || '').toUpperCase()
-        return bySymbol[sym] != null ? { ...item, price: bySymbol[sym] } : item
-      })
-    )
-  }, [])
-
-  useEffect(() => {
-    const symbols = [
-      ...(preSpikeData.watchlist || []).map((r) => r.symbol),
-      ...(spikeAlerts || []).map((r) => r.symbol),
-    ]
-    if (symbols.length) {
-      emitAlertWatchSymbols(symbols)
+    const eventMs = new Date(row.event_start).getTime()
+    if (Number.isNaN(eventMs)) return true
+    const ageMs = Date.now() - eventMs
+    const windows = {
+      '15M': 15 * 60 * 1000,
+      '30M': 30 * 60 * 1000,
+      '45M': 45 * 60 * 1000,
+      '60M': 60 * 60 * 1000,
     }
-  }, [preSpikeData.watchlist, spikeAlerts])
+    if (windows[timeframe]) return ageMs <= windows[timeframe]
+    return true
+  }, [selectedSymbol, selectedType, timeframe, spikeAlertsTab])
 
   useEffect(() => {
     const onLiveAlert = (event) => {
@@ -420,29 +407,58 @@ export default function PreSpikeDashboard() {
       setWatchlistLoading(false)
       setLastRefresh(new Date())
     }
+    const onLiveSpikeRecord = (event) => {
+      const row = event.detail
+      if (!row || !spikeMatchesFilters(row)) return
+      setSpikeAlerts((prev) => [row, ...(prev || [])].slice(0, alertsPageSize))
+      setPreSpikeData((prev) => ({
+        ...prev,
+        kpis: {
+          ...(prev.kpis || {}),
+          active_spikes: (prev.kpis?.active_spikes || 0) + 1,
+        },
+        alerts_total: (prev.alerts_total || 0) + 1,
+      }))
+      setAlertsLoading(false)
+      setLastRefresh(new Date())
+    }
+    const onSpikeSnapshot = (event) => {
+      const rows = Array.isArray(event.detail) ? event.detail : []
+      const filtered = rows.filter(spikeMatchesFilters)
+      setSpikeAlerts(filtered.slice(0, alertsPageSize))
+      setPreSpikeData((prev) => ({
+        ...prev,
+        alerts_total: filtered.length,
+        kpis: {
+          ...(prev.kpis || {}),
+          active_spikes: filtered.length,
+        },
+      }))
+      setAlertsLoading(false)
+      setLastRefresh(new Date())
+    }
     const onWsStatus = (event) => {
       setAlertWsLive(Boolean(event.detail?.connected))
     }
-    const onLivePrice = (event) => {
-      const row = event.detail
-      if (row?.symbol) applyLivePrices([row])
-    }
-    const onPriceSnapshot = (event) => {
-      applyLivePrices(event.detail)
-    }
     window.addEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
     window.addEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
+    window.addEventListener(PRICE_SPIKE_RECORD_EVENT, onLiveSpikeRecord)
+    window.addEventListener(PRICE_SPIKE_SNAPSHOT_EVENT, onSpikeSnapshot)
     window.addEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
-    window.addEventListener(PRE_SPIKE_PRICE_EVENT, onLivePrice)
-    window.addEventListener(PRE_SPIKE_PRICE_SNAPSHOT_EVENT, onPriceSnapshot)
     return () => {
       window.removeEventListener(PRE_SPIKE_ALERT_EVENT, onLiveAlert)
       window.removeEventListener(PRE_SPIKE_ALERT_SNAPSHOT_EVENT, onSnapshot)
+      window.removeEventListener(PRICE_SPIKE_RECORD_EVENT, onLiveSpikeRecord)
+      window.removeEventListener(PRICE_SPIKE_SNAPSHOT_EVENT, onSpikeSnapshot)
       window.removeEventListener(ALERT_WS_STATUS_EVENT, onWsStatus)
-      window.removeEventListener(PRE_SPIKE_PRICE_EVENT, onLivePrice)
-      window.removeEventListener(PRE_SPIKE_PRICE_SNAPSHOT_EVENT, onPriceSnapshot)
     }
-  }, [alertMatchesFilters, bumpKpisForAlert, watchlistPageSize, applyLivePrices])
+  }, [
+    alertMatchesFilters,
+    spikeMatchesFilters,
+    bumpKpisForAlert,
+    watchlistPageSize,
+    alertsPageSize,
+  ])
 
   useEffect(() => {
     getPreSpikeAlertConfig()

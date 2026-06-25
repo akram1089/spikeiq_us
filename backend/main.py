@@ -35,8 +35,6 @@ from src.workers.pre_spike_alert_service import (
     set_alert_event_loop,
     register_alert_websocket,
     unregister_alert_websocket,
-    ensure_symbols_streaming,
-    send_alert_price_snapshot,
 )
 from src.workers.pre_spike_alert_watcher import (
     ensure_alert_stream_running,
@@ -545,27 +543,12 @@ async def websocket_alerts(websocket: WebSocket):
     client_count = register_alert_websocket(websocket)
     logger.info(f"Alert WebSocket client connected (total={client_count})")
     await websocket.send_json({"type": "connected", "channel": "alerts"})
-    bootstrap_rows = await send_alert_bootstrap(websocket)
-    bootstrap_symbols = {r.get("symbol") for r in bootstrap_rows if r.get("symbol")}
-    if bootstrap_symbols:
-        ensure_symbols_streaming(bootstrap_symbols)
-    await send_alert_price_snapshot(websocket, bootstrap_symbols or None)
+    await send_alert_bootstrap(websocket)
     await ensure_alert_stream_running()
 
     try:
         while True:
-            raw = await websocket.receive_text()
-            if raw == "ping":
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if msg.get("type") == "watch_symbols":
-                syms = {s for s in (msg.get("symbols") or []) if s}
-                if syms:
-                    ensure_symbols_streaming(syms)
-                    await send_alert_price_snapshot(websocket, syms)
+            await websocket.receive_text()
     except WebSocketDisconnect:
         logger.info("Alert WebSocket client disconnected")
     except Exception as e:
