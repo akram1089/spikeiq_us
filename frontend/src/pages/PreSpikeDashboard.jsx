@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BarChart3, RefreshCw, Clock, ArrowRight, Flame, Zap, Glasses, Circle, BellRing } from 'lucide-react'
 import { getPreSpikeDashboard, getDashboardAnalytics, testPreSpikeAlert, getPreSpikeAlertConfig } from '../api/endpoints'
@@ -148,6 +148,53 @@ function formatStrength(val) {
   return strVal
 }
 
+const ROW_FLASH_MS = 10_000
+
+function eventTimeKey(ts) {
+  if (!ts) return ''
+  const ms = new Date(ts).getTime()
+  if (Number.isNaN(ms)) return String(ts).trim()
+  return String(Math.floor(ms / 1000))
+}
+
+function watchlistRowKey(row) {
+  return [
+    eventTimeKey(row?.alert_time),
+    String(row?.symbol || '').toUpperCase(),
+    String(row?.signal_type || ''),
+    String(row?.setup || ''),
+  ].join('|')
+}
+
+function spikeRowKey(row) {
+  return [
+    eventTimeKey(row?.event_start),
+    String(row?.symbol || '').toUpperCase(),
+    String(row?.action || ''),
+  ].join('|')
+}
+
+function watchlistFlashClass(signalType) {
+  const lvl = String(signalType || '').toUpperCase().trim()
+  if (lvl.includes('FUTURES') || lvl.includes('LEAD')) return 'row-flash-futures'
+  if (lvl.includes('INDEX')) return 'row-flash-index'
+  if (lvl.includes('STOCK')) return 'row-flash-stock'
+  return 'row-flash-neutral'
+}
+
+function spikeFlashClass(action) {
+  const a = String(action || 'HOLD').toUpperCase().trim()
+  if (a === 'STRONG BUY') return 'row-flash-strong-buy'
+  if (a === 'BUY') return 'row-flash-buy'
+  if (a === 'STRONG SELL') return 'row-flash-strong-sell'
+  if (a === 'SELL') return 'row-flash-sell'
+  return 'row-flash-hold'
+}
+
+function isRowFlashing(flashEntry) {
+  return Boolean(flashEntry && Date.now() < flashEntry.until)
+}
+
 export default function PreSpikeDashboard() {
   const navigate = useNavigate()
 
@@ -177,6 +224,54 @@ export default function PreSpikeDashboard() {
   
   const [lastRefresh, setLastRefresh] = useState(null)
   const [alertWsLive, setAlertWsLive] = useState(false)
+  const [flashWatchlist, setFlashWatchlist] = useState({})
+  const [flashSpike, setFlashSpike] = useState({})
+  const knownWatchlistKeysRef = useRef(new Set())
+  const knownSpikeKeysRef = useRef(new Set())
+  const skipHttpFlashRef = useRef(true)
+
+  const flashWatchlistRow = useCallback((row) => {
+    if (!row) return
+    const key = watchlistRowKey(row)
+    knownWatchlistKeysRef.current.add(key)
+    setFlashWatchlist((prev) => ({
+      ...prev,
+      [key]: { signalType: row.signal_type, until: Date.now() + ROW_FLASH_MS },
+    }))
+  }, [])
+
+  const flashSpikeRow = useCallback((row) => {
+    if (!row) return
+    const key = spikeRowKey(row)
+    knownSpikeKeysRef.current.add(key)
+    setFlashSpike((prev) => ({
+      ...prev,
+      [key]: { action: row.action, until: Date.now() + ROW_FLASH_MS },
+    }))
+  }, [])
+
+  const flashNewRowsFromHttp = useCallback((watchlist, alerts) => {
+    if (skipHttpFlashRef.current) {
+      skipHttpFlashRef.current = false
+      knownWatchlistKeysRef.current = new Set((watchlist || []).map(watchlistRowKey))
+      knownSpikeKeysRef.current = new Set((alerts || []).map(spikeRowKey))
+      return
+    }
+    for (const row of watchlist || []) {
+      const key = watchlistRowKey(row)
+      if (!knownWatchlistKeysRef.current.has(key)) {
+        flashWatchlistRow(row)
+      }
+    }
+    for (const row of alerts || []) {
+      const key = spikeRowKey(row)
+      if (!knownSpikeKeysRef.current.has(key)) {
+        flashSpikeRow(row)
+      }
+    }
+    knownWatchlistKeysRef.current = new Set((watchlist || []).map(watchlistRowKey))
+    knownSpikeKeysRef.current = new Set((alerts || []).map(spikeRowKey))
+  }, [flashWatchlistRow, flashSpikeRow])
 
   // State to force age column updates every second
   const [, setAgeTick] = useState(0)
@@ -291,6 +386,7 @@ export default function PreSpikeDashboard() {
       }
       setPreSpikeData(data)
       setSpikeAlerts(data.alerts || [])
+      flashNewRowsFromHttp(data.watchlist, data.alerts)
     } catch (e) {
       console.error('Failed to load pre-spike dashboard data:', e)
     } finally {
@@ -305,7 +401,8 @@ export default function PreSpikeDashboard() {
     watchlistPageSize,
     alertsPage,
     alertsPageSize,
-    spikeAlertsTab
+    spikeAlertsTab,
+    flashNewRowsFromHttp,
   ])
 
   // Initial load for KPIs, spike panel, and symbol list (filter/pagination changes only — no polling).
@@ -382,6 +479,7 @@ export default function PreSpikeDashboard() {
     const onLiveAlert = (event) => {
       const row = event.detail
       if (!row || !alertMatchesFilters(row)) return
+      flashWatchlistRow(row)
       setPreSpikeData((prev) => ({
         ...prev,
         kpis: bumpKpisForAlert(prev.kpis || {}, row),
@@ -393,6 +491,7 @@ export default function PreSpikeDashboard() {
     const onSnapshot = (event) => {
       const rows = Array.isArray(event.detail) ? event.detail : []
       const filtered = rows.filter(alertMatchesFilters)
+      filtered.forEach((row) => knownWatchlistKeysRef.current.add(watchlistRowKey(row)))
       setPreSpikeData((prev) => ({
         ...prev,
         watchlist: filtered.slice(0, watchlistPageSize),
@@ -410,6 +509,7 @@ export default function PreSpikeDashboard() {
     const onLiveSpikeRecord = (event) => {
       const row = event.detail
       if (!row || !spikeMatchesFilters(row)) return
+      flashSpikeRow(row)
       setSpikeAlerts((prev) => [row, ...(prev || [])].slice(0, alertsPageSize))
       setPreSpikeData((prev) => ({
         ...prev,
@@ -425,6 +525,7 @@ export default function PreSpikeDashboard() {
     const onSpikeSnapshot = (event) => {
       const rows = Array.isArray(event.detail) ? event.detail : []
       const filtered = rows.filter(spikeMatchesFilters)
+      filtered.forEach((row) => knownSpikeKeysRef.current.add(spikeRowKey(row)))
       setSpikeAlerts(filtered.slice(0, alertsPageSize))
       setPreSpikeData((prev) => ({
         ...prev,
@@ -458,6 +559,8 @@ export default function PreSpikeDashboard() {
     bumpKpisForAlert,
     watchlistPageSize,
     alertsPageSize,
+    flashWatchlistRow,
+    flashSpikeRow,
   ])
 
   useEffect(() => {
@@ -912,8 +1015,14 @@ export default function PreSpikeDashboard() {
                     </tr>
                   ))
                 ) : paginatedWatchlist.length > 0 ? (
-                  paginatedWatchlist.map((item, idx) => (
-                    <tr key={idx}>
+                  paginatedWatchlist.map((item) => {
+                    const rowKey = watchlistRowKey(item)
+                    const flashMeta = flashWatchlist[rowKey]
+                    const flashClass = isRowFlashing(flashMeta)
+                      ? watchlistFlashClass(flashMeta.signalType)
+                      : ''
+                    return (
+                    <tr key={rowKey} className={flashClass}>
                       <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '0.78rem', fontWeight: 'bold' }}>
                         {formatSpikeTime(item.alert_time)}
                       </td>
@@ -933,7 +1042,8 @@ export default function PreSpikeDashboard() {
                         {renderStatus(item.alert_status)}
                       </td>
                     </tr>
-                  ))
+                    )
+                  })
                 ) : (
                   <tr>
                     <td colSpan="6" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)' }}>
@@ -1072,8 +1182,13 @@ export default function PreSpikeDashboard() {
                                         item.quality === 'A'   ? { color: '#10b981', background: 'rgba(16,185,129,0.10)' } :
                                         item.quality === 'B'   ? { color: '#3b82f6', background: 'rgba(59,130,246,0.10)' } :
                                                                  { color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)' }
+                    const rowKey = spikeRowKey(item)
+                    const flashMeta = flashSpike[rowKey]
+                    const flashClass = isRowFlashing(flashMeta)
+                      ? spikeFlashClass(flashMeta.action)
+                      : ''
                     return (
-                      <tr key={idx}>
+                      <tr key={rowKey} className={flashClass}>
                         <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '0.78rem', fontWeight: 'bold' }}>
                           {item.event_start ? formatSpikeTime(item.event_start) : '---'}
                         </td>

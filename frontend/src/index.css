@@ -707,6 +707,35 @@ select option:checked {
   background: var(--bg-card-hover);
 }
 
+/* Pre-spike dashboard — 10s row flash on new DB records */
+.data-table tr.row-flash-futures td {
+  background: rgba(16, 185, 129, 0.32) !important;
+}
+.data-table tr.row-flash-index td {
+  background: rgba(59, 130, 246, 0.32) !important;
+}
+.data-table tr.row-flash-stock td {
+  background: rgba(245, 158, 11, 0.32) !important;
+}
+.data-table tr.row-flash-neutral td {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+.data-table tr.row-flash-strong-buy td {
+  background: rgba(16, 185, 129, 0.38) !important;
+}
+.data-table tr.row-flash-buy td {
+  background: rgba(16, 185, 129, 0.24) !important;
+}
+.data-table tr.row-flash-strong-sell td {
+  background: rgba(239, 68, 68, 0.38) !important;
+}
+.data-table tr.row-flash-sell td {
+  background: rgba(239, 68, 68, 0.24) !important;
+}
+.data-table tr.row-flash-hold td {
+  background: rgba(148, 163, 184, 0.18) !important;
+}
+
 /* ── Skeleton / Loading Placeholders ── */
 @keyframes shimmer {
   0%   { background-position: 200% center; }
