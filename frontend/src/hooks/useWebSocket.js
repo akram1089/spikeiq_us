@@ -90,7 +90,7 @@ export function useWebSocket(url, onMessageCallback) {
           if (msg.type === 'connected') {
             setIsConnected(true)
           } else if (msg.type === 'tick') {
-            const token = msg.data.instrument_token
+            const token = msg.data.instrument_token || msg.data.symbol
             if (token) {
               setLatestTicks((prev) => ({
                 ...prev,

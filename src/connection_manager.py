@@ -34,8 +34,12 @@ class ConnectionManager:
         try:
             readonly = getattr(settings, "READ_ONLY_API", False)
             await self.ib.connectAsync(self.host, self.port, clientId=self.client_id, readonly=readonly)
-            self.ib.reqMarketDataType(1)  # Request LIVE real-time market data (market is open)
-            logger.success("Successfully connected to IB Gateway and requested LIVE market data (type=1).")
+            md_type = 4 if settings.TRADING_MODE == "paper" else 1
+            self.ib.reqMarketDataType(md_type)
+            md_label = "delayed-frozen" if md_type == 4 else "live"
+            logger.success(
+                f"Successfully connected to IB Gateway and requested {md_label} market data (type={md_type})."
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to connect to IB Gateway: {e}")
@@ -75,8 +79,12 @@ class ConnectionManager:
                     
                 readonly = getattr(settings, "READ_ONLY_API", False)
                 await self.ib.connectAsync(self.host, self.port, clientId=self.client_id, readonly=readonly)
-                self.ib.reqMarketDataType(1)  # Request LIVE real-time market data
-                logger.success("Reconnected to IB Gateway successfully and requested LIVE market data (type=1).")
+                md_type = 4 if settings.TRADING_MODE == "paper" else 1
+                self.ib.reqMarketDataType(md_type)
+                md_label = "delayed-frozen" if md_type == 4 else "live"
+                logger.success(
+                    f"Reconnected to IB Gateway and requested {md_label} market data (type={md_type})."
+                )
                 break
             except asyncio.CancelledError:
                 logger.info("Reconnection loop cancelled.")

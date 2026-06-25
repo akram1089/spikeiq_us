@@ -107,6 +107,16 @@ async def lifespan(app: FastAPI):
             "TELEGRAM_CHAT_ID in docker/.env (use @YourChannel for channels)"
         )
 
+    logger.info(
+        f"Data plane: CLICKHOUSE_HOST={settings.CLICKHOUSE_HOST} "
+        f"KAFKA={settings.KAFKA_BOOTSTRAP_SERVERS}"
+    )
+    if settings.CLICKHOUSE_HOST in ("127.0.0.1", "localhost"):
+        logger.warning(
+            "CLICKHOUSE_HOST is localhost inside Docker — use host 'clickhouse' in docker/.env "
+            "and recreate backend (docker compose up -d --build backend)"
+        )
+
     logger.info("Initializing connection to IB Gateway...")
     
     # Bind Uvicorn's active running loop to the thread context
@@ -296,7 +306,16 @@ async def start_ticker(user: dict = Depends(get_current_user)):
         logger.exception("Failed to start ticker stream")
         raise HTTPException(status_code=500, detail=f"Failed to start ticker stream: {e}")
 
-    return {"message": "Ticker stream started", "running": True}
+    subscribed = len(market_data_service.contracts)
+    queued = len(market_data_service.always_stream)
+    logger.info(f"Ticker started: {subscribed}/{queued} IB market-data subscription(s) active")
+
+    return {
+        "message": "Ticker stream started",
+        "running": True,
+        "subscriptions_active": subscribed,
+        "subscriptions_queued": queued,
+    }
 
 
 @app.post("/api/market/ticker/stop")

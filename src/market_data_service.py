@@ -47,6 +47,7 @@ class MarketDataService:
         self.always_stream: Set[int] = set()
         self.active = False
         self._loop = None
+        self._tick_initialized: Dict[int, bool] = {}
 
     def _cache_for(self, instrument_id: int) -> dict:
         if instrument_id not in self.cache:
@@ -167,6 +168,7 @@ class MarketDataService:
                 pass
         self.tickers.clear()
         self.contracts.clear()
+        self._tick_initialized.clear()
 
     def stop(self):
         if not self.active:
@@ -193,7 +195,7 @@ class MarketDataService:
             finally:
                 db.close()
 
-            if inst and sec_type in ("FUT", "IND"):
+            if inst and (sec_type in ("FUT", "IND") or (inst.asset_type or "").upper() == "INDEX"):
                 contract = build_ib_contract(inst)
             elif sec_type == "STK":
                 contract = Stock(symbol, "SMART", meta.get("currency", "USD"))
@@ -325,14 +327,21 @@ class MarketDataService:
         new_close = _safe_float(ticker.close)
 
         cache = self._cache_for(instrument_id)
+        initialized = self._tick_initialized.get(instrument_id, False)
 
         if (
-            new_last == cache.get("last")
+            initialized
+            and new_last == cache.get("last")
             and new_bid == cache.get("bid")
             and new_ask == cache.get("ask")
             and new_close == cache.get("close")
         ):
             return
+
+        if not initialized and new_last is None and new_bid is None and new_ask is None and new_close is None:
+            return
+
+        self._tick_initialized[instrument_id] = True
 
         if new_last is not None:
             cache["last"] = new_last
