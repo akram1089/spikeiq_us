@@ -52,6 +52,8 @@ from src.subscriptions.router import (
 )
 from src.db.postgres import check_postgres_health, init_db
 from config import settings
+from src.workers.market_session_coordinator import MarketSessionCoordinator
+from src.utils.market_hours import is_us_regular_session_open
 
 # Patch asyncio to work with existing uvicorn event loops
 util.patchAsyncio()
@@ -74,11 +76,12 @@ def _ws_client_count() -> int:
         return 0
     return market_data_service.unique_websocket_count()
 sm_sync_worker: SecurityMasterSyncWorker = None
+market_coordinator: MarketSessionCoordinator = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages the startup and shutdown lifecycles of the connection to IB Gateway, ClickHouse, and Kafka."""
-    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker
+    global conn, account_service, hist_service, market_data_service, sub_worker, tick_worker, sm_sync_worker, market_coordinator
     
     # 1. Initialize PostgreSQL Security Master
     try:
@@ -141,31 +144,8 @@ async def lifespan(app: FastAPI):
     set_subscriptions_market_data(market_data_service)
     set_market_data_service(market_data_service)
 
-    async def _start_autonomous_streaming():
-        try:
-            await market_data_service.ensure_autonomous_streaming()
-        except Exception as e:
-            logger.error(f"Autonomous streaming startup failed: {e}")
-
-    async def _ib_market_data_watchdog():
-        """IB Gateway often becomes ready after the backend starts; (re)subscribe on connect."""
-        was_connected = False
-        while True:
-            await conn.connected_event.wait()
-            try:
-                if market_data_service and conn.ib.isConnected():
-                    await market_data_service.ensure_autonomous_streaming(
-                        force_resubscribe=was_connected
-                    )
-            except Exception as e:
-                logger.error(f"Failed to ensure market data subscriptions: {e}")
-            was_connected = True
-            while conn.ib.isConnected():
-                await asyncio.sleep(2)
-            was_connected = False
-
-    asyncio.create_task(_ib_market_data_watchdog())
-    asyncio.create_task(_start_autonomous_streaming())
+    market_coordinator = MarketSessionCoordinator(conn, market_data_service)
+    market_coordinator.start()
 
     # 4. Start Background Event Consumers
     try:
@@ -192,6 +172,8 @@ async def lifespan(app: FastAPI):
     if tick_worker:
         tick_worker.stop()
     await maybe_stop_alert_stream()
+    if market_coordinator:
+        await market_coordinator.stop()
     if kafka_producer:
         kafka_producer.flush()
     if market_data_service:
@@ -271,7 +253,12 @@ async def ticker_status(user: dict = Depends(get_current_user)):
         except Exception as e:
             logger.warning(f"ticker_status cache refresh failed: {e}")
 
-    running = bool(market_data_service and market_data_service.active)
+    stats = (
+        market_data_service.subscription_stats()
+        if market_data_service
+        else {"active": 0, "queued": 0, "healthy": False}
+    )
+    running = stats["active"] > 0
     return {
         "running": running,
         "kite_authenticated": ib_connected,
@@ -280,6 +267,10 @@ async def ticker_status(user: dict = Depends(get_current_user)):
         "ws_clients": _ws_client_count(),
         "today_alerts": _status_cache.get("today_alerts", 0),
         "today_ticks": _status_cache.get("today_ticks", 0),
+        "subscriptions_active": stats["active"],
+        "subscriptions_queued": stats["queued"],
+        "streaming_healthy": stats["healthy"],
+        "market_open": is_us_regular_session_open(),
     }
 
 

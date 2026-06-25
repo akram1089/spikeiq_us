@@ -143,7 +143,6 @@ class MarketDataService:
             return
 
         self._loop = asyncio.get_event_loop()
-        self.active = True
 
         if force_resubscribe:
             self._clear_ib_subscriptions()
@@ -151,9 +150,19 @@ class MarketDataService:
         for instrument_id in sorted(self.always_stream):
             await self._subscribe_to_instrument(instrument_id)
 
+        self.active = len(self.contracts) > 0
         logger.success(
-            f"Autonomous streaming active for {len(self.always_stream)} instrument(s)"
+            f"Autonomous streaming active for {len(self.contracts)}/{len(self.always_stream)} instrument(s)"
         )
+
+    def subscription_stats(self) -> dict:
+        queued = len(self.always_stream)
+        active = len(self.contracts)
+        return {
+            "active": active,
+            "queued": queued,
+            "healthy": queued > 0 and active >= queued,
+        }
 
     async def ensure_subscriptions(self):
         await self.ensure_autonomous_streaming(force_resubscribe=True)
