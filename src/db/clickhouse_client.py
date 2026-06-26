@@ -245,6 +245,73 @@ class ClickHouseManager:
             for row in rows
         ]
 
+    def has_active_user_subscription(
+        self,
+        con_id: int,
+        *,
+        instrument_id: int | None = None,
+        client=None,
+    ) -> bool:
+        """True if any user has an active subscription for this instrument."""
+        ch = client or self.get_client()
+        params: dict = {"cid": int(con_id)}
+        if instrument_id:
+            params["iid"] = int(instrument_id)
+            query = f"""
+                SELECT 1
+                FROM {self.database}.user_subscriptions FINAL
+                WHERE is_active = 1
+                  AND (con_id = {{cid:UInt32}} OR instrument_id = {{iid:UInt64}})
+                LIMIT 1
+            """
+        else:
+            query = f"""
+                SELECT 1
+                FROM {self.database}.user_subscriptions FINAL
+                WHERE is_active = 1 AND con_id = {{cid:UInt32}}
+                LIMIT 1
+            """
+        rows = ch.query(query, parameters=params).result_rows
+        return bool(rows)
+
+    def resolve_catalog_is_active(
+        self,
+        *,
+        con_id: int,
+        stream_active: bool,
+        instrument_id: int | None = None,
+        client=None,
+    ) -> bool:
+        """Streaming catalog is_active: sync may not deactivate user-subscribed instruments."""
+        if stream_active:
+            return True
+        if self.has_active_user_subscription(
+            con_id, instrument_id=instrument_id, client=client
+        ):
+            logger.debug(
+                f"Preserving streaming catalog for user-subscribed con_id={con_id}"
+            )
+            return True
+        return False
+
+    def upsert_user_subscription(
+        self,
+        *,
+        user_id: str,
+        instrument_id: int,
+        con_id: int,
+        symbol: str,
+        is_active: bool,
+        client=None,
+    ) -> None:
+        """Record or update a user's streaming subscription in ClickHouse."""
+        ch = client or self.get_client()
+        ch.insert(
+            "user_subscriptions",
+            [[user_id, int(instrument_id), int(con_id), symbol.upper(), 1 if is_active else 0]],
+            column_names=["user_id", "instrument_id", "con_id", "symbol", "is_active"],
+        )
+
     def upsert_catalog_instrument(
         self,
         *,
@@ -284,19 +351,33 @@ class ClickHouseManager:
         sec_type = ASSET_TYPE_TO_SEC_TYPE.get(
             (inst.asset_type or "STOCK").upper(), "STK"
         )
+        con_id = int(inst.ibkr_conid)
+        is_active = bool(inst.is_active)
+        if not is_active:
+            is_active = self.resolve_catalog_is_active(
+                con_id=con_id,
+                stream_active=False,
+                instrument_id=inst.id,
+                client=client,
+            )
         self.upsert_catalog_instrument(
-            con_id=int(inst.ibkr_conid),
+            con_id=con_id,
             symbol=inst.symbol,
             exchange=inst.exchange or "SMART",
             sec_type=sec_type,
             currency=inst.currency or "USD",
             name=inst.name or inst.symbol,
-            is_active=bool(inst.is_active),
+            is_active=is_active,
             client=client,
         )
 
     def deactivate_catalog_instrument(self, con_id: int, client=None) -> None:
-        """Mark an instrument inactive in the streaming catalog."""
+        """Mark an instrument inactive in the streaming catalog unless users still subscribe."""
+        if self.has_active_user_subscription(int(con_id), client=client):
+            logger.info(
+                f"Skipping catalog deactivation for con_id={con_id} — active user subscription(s)"
+            )
+            return
         ch = client or self.get_client()
         rows = ch.query(
             f"""

@@ -54,20 +54,23 @@ class SubscriptionWorker(threading.Thread):
                 instrument_id = int(payload.get("instrument_id", 0))
                 symbol = payload.get("symbol", "").upper()
                 action = payload.get("action")
-                is_active = 1 if action == "SUBSCRIBE" else 0
+                is_subscribe = action == "SUBSCRIBE"
 
                 logger.info(
                     f"Processing subscription: user={user_id}, instrument_id={instrument_id}, action={action}"
                 )
 
-                db_client.insert(
-                    "user_subscriptions",
-                    [[user_id, instrument_id, con_id, symbol, is_active]],
-                    column_names=["user_id", "instrument_id", "con_id", "symbol", "is_active"],
+                ch_manager.upsert_user_subscription(
+                    user_id=user_id,
+                    instrument_id=instrument_id,
+                    con_id=con_id,
+                    symbol=symbol,
+                    is_active=is_subscribe,
+                    client=db_client,
                 )
                 logger.success(f"ClickHouse subscription updated for {user_id} -> {symbol} ({action})")
 
-                if action == "SUBSCRIBE" and con_id:
+                if is_subscribe and con_id:
                     from src.db.postgres import SessionLocal
                     from src.security_master.repository import InstrumentRepository
 

@@ -120,7 +120,7 @@ class MarketDataService:
             registered = 0
             for row in catalog_rows:
                 inst = repo.get_by_ibkr_conid(row["con_id"]) or repo.get_by_symbol(row["symbol"])
-                if inst and inst.ibkr_conid and inst.is_active:
+                if inst and inst.ibkr_conid:
                     self._register_stream_instrument(inst)
                     registered += 1
                 else:

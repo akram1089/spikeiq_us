@@ -56,6 +56,14 @@ async def subscribe(
     if inst.ibkr_conid is None:
         raise HTTPException(status_code=422, detail="Instrument has no IBKR contract ID")
 
+    ch_manager.upsert_user_subscription(
+        user_id=username,
+        instrument_id=inst.id,
+        con_id=int(inst.ibkr_conid),
+        symbol=inst.symbol,
+        is_active=True,
+    )
+
     # Streaming source of truth: ClickHouse instruments catalog
     ch_manager.upsert_catalog_from_instrument(inst)
 
@@ -95,6 +103,14 @@ async def unsubscribe(
     inst = repo.get_by_id(instrument_id)
     if not inst:
         raise HTTPException(status_code=404, detail="Instrument not found")
+
+    ch_manager.upsert_user_subscription(
+        user_id=username,
+        instrument_id=instrument_id,
+        con_id=int(inst.ibkr_conid or 0),
+        symbol=inst.symbol,
+        is_active=False,
+    )
 
     if inst.ibkr_conid:
         ch_manager.deactivate_catalog_instrument(int(inst.ibkr_conid))

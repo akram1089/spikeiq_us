@@ -70,27 +70,34 @@ class SecurityMasterSyncWorker(threading.Thread):
 
         asset_type = payload.get("asset_type", "STOCK").upper()
         sec_type = ASSET_TYPE_TO_SEC_TYPE.get(asset_type, "STK")
-        stream_active = 1 if payload.get("stream_active", False) else 0
+        con_id = int(ibkr_conid)
+        instrument_id = payload.get("instrument_id")
+        stream_active = ch_manager.resolve_catalog_is_active(
+            con_id=con_id,
+            stream_active=bool(payload.get("stream_active", False)),
+            instrument_id=int(instrument_id) if instrument_id else None,
+            client=self._db_client,
+        )
 
         client = self._db_client
         client.insert(
             "instruments",
             [[
-                int(ibkr_conid),
+                con_id,
                 payload.get("symbol", ""),
                 payload.get("exchange") or "SMART",
                 sec_type,
                 payload.get("currency") or "USD",
                 payload.get("symbol", ""),
-                stream_active,
+                1 if stream_active else 0,
             ]],
             column_names=["con_id", "symbol", "exchange", "sec_type", "currency", "name", "is_active"],
         )
         logger.debug(
-            f"Synced instrument {payload.get('instrument_id')} ({payload.get('symbol')}) to ClickHouse"
+            f"Synced instrument {instrument_id} ({payload.get('symbol')}) to ClickHouse "
+            f"(is_active={1 if stream_active else 0})"
         )
 
-        instrument_id = payload.get("instrument_id")
         if stream_active and instrument_id and self.market_data_service:
             self.market_data_service.request_streaming(int(instrument_id))
 
