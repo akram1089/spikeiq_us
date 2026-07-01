@@ -1,6 +1,7 @@
 # SpikeIQ US — VPS Deployment Guide
 
-Deploy to **https://spikeiq.chickenkiller.com/** alongside existing Docker apps without disrupting them.
+Deploy to **https://us.spikeiq.cloud/** (primary domain) alongside existing Docker apps without disrupting them.
+> Legacy domain **https://spikeiq.chickenkiller.com/** remains functional; new deployments should use `us.spikeiq.cloud`.
 
 ## Architecture
 
