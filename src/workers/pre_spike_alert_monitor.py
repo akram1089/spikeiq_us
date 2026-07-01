@@ -32,6 +32,13 @@ class PreSpikeAlertMonitor:
     def _lookback_seconds(self) -> int:
         return max(60, int(settings.PRE_SPIKE_ALERT_LOOKBACK_SECONDS))
 
+    def _snapshot_lookback_seconds(self) -> int:
+        """Larger lookback for bootstrap snapshots — covers the full trading day.
+        8 hours (28800s) safely covers pre-market + regular session from 09:30 ET.
+        This ensures the frontend's known-keys set is comprehensive so old rows
+        don't flash as 'new' when live WS alerts arrive."""
+        return 28800
+
     def _fetch_rows(self, sql: str) -> List[Dict[str, Any]]:
         client = ch_manager.create_worker_client()
         result = client.query(sql)
@@ -77,7 +84,7 @@ class PreSpikeAlertMonitor:
     def _fetch_snapshot_rows(self, *, limit: int) -> List[Dict[str, Any]]:
         db = settings.CLICKHOUSE_DB
         sql = pre_spike_monitor_snapshot_sql(
-            db, lookback_sec=self._lookback_seconds(), row_limit=limit
+            db, lookback_sec=self._snapshot_lookback_seconds(), row_limit=limit
         )
         return self._fetch_rows(sql)
 

@@ -229,6 +229,9 @@ export default function PreSpikeDashboard() {
   const knownWatchlistKeysRef = useRef(new Set())
   const knownSpikeKeysRef = useRef(new Set())
   const skipHttpFlashRef = useRef(true)
+  // Tracks whether HTTP has successfully loaded data at least once.
+  // WS snapshots must NOT overwrite the table once HTTP data is present.
+  const httpDataLoadedRef = useRef(false)
 
   const flashWatchlistRow = useCallback((row) => {
     if (!row) return
@@ -413,6 +416,7 @@ export default function PreSpikeDashboard() {
       setSpikeAlerts(spikeAlertsFromApi || [])
       setPreSpikeData(prev => ({ ...prev, alerts_total: alerts_total || 0 }))
       flashNewRowsFromHttp(data.watchlist, spikeAlertsFromApi)
+      httpDataLoadedRef.current = true
     } catch (e) {
       console.error('Failed to load pre-spike dashboard data:', e)
     } finally {
@@ -516,19 +520,27 @@ export default function PreSpikeDashboard() {
     }
     const onSnapshot = (event) => {
       const rows = Array.isArray(event.detail) ? event.detail : []
-      const filtered = rows.filter(alertMatchesFilters)
-      filtered.forEach((row) => knownWatchlistKeysRef.current.add(watchlistRowKey(row)))
-      setPreSpikeData((prev) => ({
-        ...prev,
-        watchlist: filtered.slice(0, watchlistPageSize),
-        watchlist_total: filtered.length,
-        kpis: filtered.reduce((kpis, row) => bumpKpisForAlert(kpis, row), {
-          futures_leads: 0,
-          index_watches: 0,
-          stock_watches: 0,
-          active_spikes: prev.kpis?.active_spikes || 0,
-        }),
-      }))
+      // Register all snapshot rows as "known" so live alerts that are already
+      // in the snapshot don't flash as new when they arrive via onLiveAlert.
+      rows.forEach((row) => knownWatchlistKeysRef.current.add(watchlistRowKey(row)))
+      // Do NOT replace the HTTP-loaded table data with the WS snapshot.
+      // HTTP endpoint is the source of truth (full day, paginated, filtered).
+      // WS snapshot only has a short lookback window and would show fewer rows.
+      // If HTTP hasn't loaded yet (race condition), fall back to WS snapshot.
+      if (!httpDataLoadedRef.current) {
+        const filtered = rows.filter(alertMatchesFilters)
+        setPreSpikeData((prev) => ({
+          ...prev,
+          watchlist: filtered.slice(0, watchlistPageSize),
+          watchlist_total: filtered.length,
+          kpis: filtered.reduce((kpis, row) => bumpKpisForAlert(kpis, row), {
+            futures_leads: 0,
+            index_watches: 0,
+            stock_watches: 0,
+            active_spikes: prev.kpis?.active_spikes || 0,
+          }),
+        }))
+      }
       setWatchlistLoading(false)
       setLastRefresh(new Date())
     }
@@ -550,17 +562,21 @@ export default function PreSpikeDashboard() {
     }
     const onSpikeSnapshot = (event) => {
       const rows = Array.isArray(event.detail) ? event.detail : []
-      const filtered = rows.filter(spikeMatchesFilters)
-      filtered.forEach((row) => knownSpikeKeysRef.current.add(spikeRowKey(row)))
-      setSpikeAlerts(filtered.slice(0, alertsPageSize))
-      setPreSpikeData((prev) => ({
-        ...prev,
-        alerts_total: filtered.length,
-        kpis: {
-          ...(prev.kpis || {}),
-          active_spikes: filtered.length,
-        },
-      }))
+      // Register all snapshot rows as "known" so live spike records that already
+      // exist in the snapshot don't flash as new when they arrive via onLiveSpikeRecord.
+      rows.forEach((row) => knownSpikeKeysRef.current.add(spikeRowKey(row)))
+      // Do NOT replace HTTP-loaded spike alerts with the WS snapshot.
+      // HTTP endpoint returns properly paginated full-day data.
+      // Only fall back to WS snapshot if HTTP hasn't loaded yet.
+      if (!httpDataLoadedRef.current) {
+        const filtered = rows.filter(spikeMatchesFilters)
+        setSpikeAlerts(filtered.slice(0, alertsPageSize))
+        setPreSpikeData((prev) => ({
+          ...prev,
+          alerts_total: filtered.length,
+          kpis: { ...(prev.kpis || {}), active_spikes: filtered.length },
+        }))
+      }
       setAlertsLoading(false)
       setLastRefresh(new Date())
     }
