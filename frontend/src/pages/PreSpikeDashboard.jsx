@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, RefreshCw, Clock, ArrowRight, Flame, Zap, Glasses, Circle, BellRing } from 'lucide-react'
-import { getPreSpikeDashboard, getDashboardAnalytics, testPreSpikeAlert, getPreSpikeAlertConfig } from '../api/endpoints'
+import { BarChart3, RefreshCw, Clock, ArrowRight, Flame, Zap, Glasses, Circle, ChevronDown, X } from 'lucide-react'
+import { getPreSpikeDashboard, getDashboardAnalytics } from '../api/endpoints'
 import { formatNumber, formatPct } from '../utils/formatters'
 import toast from 'react-hot-toast'
 import { requestPushPermission, isPushActive, setPushEnabled } from '../utils/browserNotify'
@@ -200,13 +200,13 @@ export default function PreSpikeDashboard() {
 
   // State for filters
   const [timeframe, setTimeframe] = useState('DAY')
-  const [selectedSymbol, setSelectedSymbol] = useState('ALL')
+  const [selectedSymbols, setSelectedSymbols] = useState([]) // [] = All
   const [selectedType, setSelectedType] = useState('ALL')
+  const [symbolDropdownOpen, setSymbolDropdownOpen] = useState(false)
+  const symbolDropdownRef = useRef(null)
 
   // Tab filters
   const [spikeAlertsTab, setSpikeAlertsTab] = useState('ALL')
-  const [testingAlert, setTestingAlert] = useState(false)
-  const [telegramConfigured, setTelegramConfigured] = useState(false)
   const [pushEnabled, setPushEnabledState] = useState(() => isPushActive())
 
   // Data State
@@ -290,23 +290,32 @@ export default function PreSpikeDashboard() {
   const [alertsPage, setAlertsPage] = useState(1)
   const [alertsPageSize, setAlertsPageSize] = useState(10)
 
+  // Close symbol dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (symbolDropdownRef.current && !symbolDropdownRef.current.contains(e.target)) {
+        setSymbolDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   // Reset page numbers on filters change
   useEffect(() => {
     setWatchlistPage(1)
-  }, [timeframe, selectedSymbol, selectedType])
+  }, [timeframe, selectedSymbols, selectedType])
 
   useEffect(() => {
     setAlertsPage(1)
-  }, [spikeAlertsTab, selectedSymbol, selectedType])
+  }, [spikeAlertsTab, selectedSymbols, selectedType])
 
-  // Reset selectedSymbol if its type doesn't match the new selectedType
+  // Clear symbol selections that don't match selectedType
   useEffect(() => {
-    if (selectedSymbol !== 'ALL' && selectedType !== 'ALL') {
-      if (getSymbolType(selectedSymbol) !== selectedType) {
-        setSelectedSymbol('ALL')
-      }
+    if (selectedType !== 'ALL' && selectedSymbols.length > 0) {
+      setSelectedSymbols(prev => prev.filter(s => getSymbolType(s) === selectedType))
     }
-  }, [selectedType, selectedSymbol])
+  }, [selectedType])
 
   // Handlers to set specific loading states
   const handleTimeframeChange = (val) => {
@@ -315,10 +324,18 @@ export default function PreSpikeDashboard() {
     setTimeframe(val)
   }
 
-  const handleSelectedSymbolChange = (val) => {
+  const handleToggleSymbol = (sym) => {
     setWatchlistLoading(true)
     setAlertsLoading(true)
-    setSelectedSymbol(val)
+    setSelectedSymbols(prev =>
+      prev.includes(sym) ? prev.filter(s => s !== sym) : [...prev, sym]
+    )
+  }
+
+  const handleClearSymbols = () => {
+    setWatchlistLoading(true)
+    setAlertsLoading(true)
+    setSelectedSymbols([])
   }
 
   const handleSelectedTypeChange = (val) => {
@@ -366,9 +383,13 @@ export default function PreSpikeDashboard() {
       return
     }
     try {
+      // Build symbol param: null = All, single string for 1 symbol, comma-separated for multi
+      const symbolParam = selectedSymbols.length === 0
+        ? null
+        : selectedSymbols.join(',')
       const res = await getPreSpikeDashboard({
         timeframe,
-        symbol: selectedSymbol === 'ALL' ? null : selectedSymbol,
+        symbol: symbolParam,
         symbolType: selectedType,
         wlPage: watchlistPage,
         wlPageSize: watchlistPageSize,
@@ -384,9 +405,14 @@ export default function PreSpikeDashboard() {
         alerts_total: 0,
         symbols: []
       }
-      setPreSpikeData(data)
-      setSpikeAlerts(data.alerts || [])
-      flashNewRowsFromHttp(data.watchlist, data.alerts)
+      // Explicitly separate: preSpikeData holds ONLY v_pre_spike_alerts_ui fields.
+      // v_price_spikes rows (data.alerts) go ONLY into spikeAlerts state.
+      // This prevents any cross-contamination between the two data sources.
+      const { alerts: spikeAlertsFromApi, alerts_total, ...watchlistData } = data
+      setPreSpikeData(watchlistData)
+      setSpikeAlerts(spikeAlertsFromApi || [])
+      setPreSpikeData(prev => ({ ...prev, alerts_total: alerts_total || 0 }))
+      flashNewRowsFromHttp(data.watchlist, spikeAlertsFromApi)
     } catch (e) {
       console.error('Failed to load pre-spike dashboard data:', e)
     } finally {
@@ -395,7 +421,7 @@ export default function PreSpikeDashboard() {
     }
   }, [
     timeframe,
-    selectedSymbol,
+    selectedSymbols,
     selectedType,
     watchlistPage,
     watchlistPageSize,
@@ -418,7 +444,7 @@ export default function PreSpikeDashboard() {
 
   const alertMatchesFilters = useCallback((row) => {
     if (!row?.symbol) return false
-    if (selectedSymbol !== 'ALL' && row.symbol !== selectedSymbol) return false
+    if (selectedSymbols.length > 0 && !selectedSymbols.includes(row.symbol)) return false
     const symType = getSymbolType(row.symbol)
     if (selectedType !== 'ALL' && symType !== selectedType) return false
     if (timeframe === 'ALL') return true
@@ -436,7 +462,7 @@ export default function PreSpikeDashboard() {
     }
     if (windows[timeframe]) return ageMs <= windows[timeframe]
     return true
-  }, [selectedSymbol, selectedType, timeframe])
+  }, [selectedSymbols, selectedType, timeframe])
 
   const bumpKpisForAlert = useCallback((kpis, row) => {
     const st = String(row.signal_type || '').toUpperCase()
@@ -453,7 +479,7 @@ export default function PreSpikeDashboard() {
 
   const spikeMatchesFilters = useCallback((row) => {
     if (!row?.symbol) return false
-    if (selectedSymbol !== 'ALL' && row.symbol !== selectedSymbol) return false
+    if (selectedSymbols.length > 0 && !selectedSymbols.includes(row.symbol)) return false
     const symType = getSymbolType(row.symbol)
     if (selectedType !== 'ALL' && symType !== selectedType) return false
     const action = String(row.action || 'HOLD').toUpperCase().trim()
@@ -473,7 +499,7 @@ export default function PreSpikeDashboard() {
     }
     if (windows[timeframe]) return ageMs <= windows[timeframe]
     return true
-  }, [selectedSymbol, selectedType, timeframe, spikeAlertsTab])
+  }, [selectedSymbols, selectedType, timeframe, spikeAlertsTab])
 
   useEffect(() => {
     const onLiveAlert = (event) => {
@@ -563,36 +589,7 @@ export default function PreSpikeDashboard() {
     flashSpikeRow,
   ])
 
-  useEffect(() => {
-    getPreSpikeAlertConfig()
-      .then((res) => setTelegramConfigured(Boolean(res.data?.telegram_configured)))
-      .catch(() => setTelegramConfigured(false))
-  }, [])
-
-  const handleTestAlert = async () => {
-    setTestingAlert(true)
-    try {
-      const res = await testPreSpikeAlert()
-      const data = res.data || {}
-      // Always show toast + beep locally (WS may be offline or already echoed the alert).
-      if (data.alert) {
-        showPreSpikeAlertToast(data.alert)
-      }
-      const tg = data.telegram_sent
-        ? 'Telegram sent'
-        : data.telegram_queued
-          ? 'Telegram queued'
-          : data.telegram_configured
-            ? 'Telegram failed'
-            : 'Telegram not configured'
-      const ws = data.ws_clients != null ? `${data.ws_clients} browser client(s)` : 'WebSocket dispatched'
-      toast.success(`Test alert fired · ${ws} · ${tg}`)
-    } catch (e) {
-      console.error('Test pre-spike alert failed:', e)
-      toast.error(e.response?.data?.detail || 'Failed to send test alert')
-    } finally {
-      setTestingAlert(false)
-    }
+  // (Test Alert button removed — was only needed for development)
   }
 
   const handleTogglePush = async () => {
@@ -810,28 +807,153 @@ export default function PreSpikeDashboard() {
             />
             {alertWsLive ? 'LIVE ALERTS' : 'ALERTS OFFLINE'}
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Symbol:</span>
-            <select
-              value={selectedSymbol}
-              onChange={(e) => handleSelectedSymbolChange(e.target.value)}
+          {/* ── Multi-select Instrument Picker ── */}
+          <div ref={symbolDropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setSymbolDropdownOpen(prev => !prev)}
               style={{
-                padding: '4px 24px 4px 8px',
-                fontSize: '0.78rem',
-                borderRadius: '6px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 10px',
                 height: '28px',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                background: 'rgba(255, 255, 255, 0.03)',
-                color: 'var(--text-primary)',
+                borderRadius: '6px',
+                border: selectedSymbols.length > 0
+                  ? '1px solid rgba(59, 130, 246, 0.5)'
+                  : '1px solid rgba(255, 255, 255, 0.1)',
+                background: selectedSymbols.length > 0
+                  ? 'rgba(59, 130, 246, 0.08)'
+                  : 'rgba(255, 255, 255, 0.03)',
+                color: selectedSymbols.length > 0 ? '#3b82f6' : 'var(--text-secondary)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
                 cursor: 'pointer',
-                outline: 'none'
+                whiteSpace: 'nowrap',
+                minWidth: '120px',
+                maxWidth: '220px',
               }}
             >
-              <option value="ALL">All Symbols</option>
-              {uniqueSymbols.map(sym => (
-                <option key={sym} value={sym}>{sym}</option>
-              ))}
-            </select>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, textAlign: 'left' }}>
+                {selectedSymbols.length === 0
+                  ? 'All Symbols'
+                  : selectedSymbols.length === 1
+                    ? selectedSymbols[0]
+                    : `${selectedSymbols.length} symbols`}
+              </span>
+              {selectedSymbols.length > 0 && (
+                <span
+                  onClick={(e) => { e.stopPropagation(); handleClearSymbols() }}
+                  style={{ display: 'flex', alignItems: 'center', color: '#60a5fa', cursor: 'pointer' }}
+                  title="Clear selection"
+                >
+                  <X size={11} />
+                </span>
+              )}
+              <ChevronDown size={11} style={{ opacity: 0.6, transform: symbolDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+            </button>
+
+            {/* Selected symbol pills */}
+            {selectedSymbols.length > 1 && (
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px', position: 'absolute', top: '30px', left: 0, zIndex: 10 }}>
+                {selectedSymbols.map(sym => (
+                  <span key={sym} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '3px',
+                    background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.35)',
+                    color: '#93c5fd', borderRadius: '4px', padding: '1px 5px', fontSize: '0.68rem', fontWeight: 700
+                  }}>
+                    {sym}
+                    <X size={9} style={{ cursor: 'pointer' }} onClick={() => handleToggleSymbol(sym)} />
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Dropdown panel */}
+            {symbolDropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                top: '32px',
+                left: 0,
+                zIndex: 200,
+                background: 'rgba(15, 20, 35, 0.98)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '10px',
+                boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+                minWidth: '200px',
+                maxWidth: '260px',
+                maxHeight: '320px',
+                overflowY: 'auto',
+                padding: '8px 0',
+              }}>
+                {/* All option */}
+                <div
+                  onClick={handleClearSymbols}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '6px 12px', cursor: 'pointer', fontSize: '0.78rem',
+                    color: selectedSymbols.length === 0 ? '#3b82f6' : 'var(--text-secondary)',
+                    background: selectedSymbols.length === 0 ? 'rgba(59, 130, 246, 0.08)' : 'transparent',
+                    fontWeight: selectedSymbols.length === 0 ? 700 : 400,
+                    borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    marginBottom: '4px',
+                  }}
+                >
+                  <span style={{
+                    width: '14px', height: '14px', borderRadius: '3px', flexShrink: 0,
+                    border: selectedSymbols.length === 0 ? '2px solid #3b82f6' : '1.5px solid rgba(255,255,255,0.2)',
+                    background: selectedSymbols.length === 0 ? '#3b82f6' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {selectedSymbols.length === 0 && <span style={{ color: '#fff', fontSize: '0.6rem', fontWeight: 900 }}>✓</span>}
+                  </span>
+                  All Symbols
+                </div>
+
+                {/* Individual symbols */}
+                {uniqueSymbols.length === 0 ? (
+                  <div style={{ padding: '10px 14px', color: 'var(--text-muted)', fontSize: '0.75rem', textAlign: 'center' }}>
+                    No symbols available
+                  </div>
+                ) : (
+                  uniqueSymbols.map(sym => {
+                    const isChecked = selectedSymbols.includes(sym)
+                    return (
+                      <div
+                        key={sym}
+                        onClick={() => handleToggleSymbol(sym)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px',
+                          padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem',
+                          color: isChecked ? '#93c5fd' : 'var(--text-primary)',
+                          background: isChecked ? 'rgba(59, 130, 246, 0.06)' : 'transparent',
+                          fontWeight: isChecked ? 700 : 400,
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={e => { if (!isChecked) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                        onMouseLeave={e => { if (!isChecked) e.currentTarget.style.background = 'transparent' }}
+                      >
+                        <span style={{
+                          width: '14px', height: '14px', borderRadius: '3px', flexShrink: 0,
+                          border: isChecked ? '2px solid #3b82f6' : '1.5px solid rgba(255,255,255,0.2)',
+                          background: isChecked ? '#3b82f6' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {isChecked && <span style={{ color: '#fff', fontSize: '0.6rem', fontWeight: 900 }}>✓</span>}
+                        </span>
+                        <span style={{ flex: 1 }}>{sym}</span>
+                        {isChecked && (
+                          <span style={{
+                            fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.04em',
+                            color: '#60a5fa', background: 'rgba(59,130,246,0.15)',
+                            borderRadius: '3px', padding: '1px 4px'
+                          }}>ON</span>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
@@ -895,29 +1017,6 @@ export default function PreSpikeDashboard() {
             }}
           >
             {pushEnabled ? '🔔 Push On' : '🔕 Push Off'}
-          </button>
-
-          <button
-            onClick={handleTestAlert}
-            className="btn btn-ghost"
-            disabled={testingAlert}
-            title={telegramConfigured ? 'Test browser + Telegram alert' : 'Test browser alert (add Telegram env for mobile)'}
-            style={{
-              padding: '4px 12px',
-              borderRadius: '6px',
-              border: '1px solid rgba(239, 68, 68, 0.35)',
-              background: 'rgba(239, 68, 68, 0.08)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              height: '28px',
-              fontSize: '0.72rem',
-              fontWeight: 700,
-              color: '#f87171',
-            }}
-          >
-            <BellRing size={13} className={testingAlert ? 'spin-animation' : ''} />
-            {testingAlert ? 'Testing…' : 'Test Alert'}
           </button>
 
           <button

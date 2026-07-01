@@ -204,7 +204,7 @@ def _build_dashboard_where(
 @router.get("/pre-spike", )
 async def get_pre_spike_dashboard(
     timeframe: str = Query(default="DAY", description="Timeframe filter (15m, 30m, 45m, 60m, Day, All)"),
-    symbol: Optional[str] = Query(default=None, description="Optional symbol filter"),
+    symbol: Optional[str] = Query(default=None, description="Single symbol or comma-separated list of symbols to filter (e.g. 'NDX' or 'NDX,AAPL,CRWD')"),
     symbol_type: str = Query(default="ALL", description="Filter by symbol type (ALL, FUTURES, INDEX, STOCK)"),
     wl_page: int = Query(default=1, ge=1, description="Watchlist page number"),
     wl_page_size: int = Query(default=10, ge=1, description="Watchlist page size"),
@@ -301,9 +301,28 @@ async def get_pre_spike_dashboard(
         # Always enforce a minimum 7-day bound to prevent full 4.9M row scans
         watchlist_where_clauses = ["alert_time >= now() - INTERVAL 7 DAY"]
         params = {}
+
+        # Parse and validate multi-symbol filter (comma-separated from frontend).
+        # Each symbol is validated against the allowlist before being interpolated.
+        symbol_list: list[str] = []
         if symbol:
-            watchlist_where_clauses.append("symbol = {symbol:String}")
-            params["symbol"] = symbol
+            raw_syms = [s.strip() for s in symbol.split(",") if s.strip()]
+            symbol_list = [s for s in raw_syms if _is_valid_symbol(s)]
+            if len(symbol_list) != len(raw_syms):
+                raise HTTPException(
+                    status_code=400,
+                    detail="One or more symbols contain invalid characters",
+                )
+
+        if symbol_list:
+            if len(symbol_list) == 1:
+                params["symbol"] = symbol_list[0]
+                watchlist_where_clauses.append("symbol = {symbol:String}")
+            else:
+                # Build safe IN clause using ClickHouse array literal —
+                # each element was validated against _SYMBOL_ALLOWED_CHARS.
+                quoted = ", ".join(f"'{s}'" for s in symbol_list)
+                watchlist_where_clauses.append(f"symbol IN ({quoted})")
 
         if tf == "15M":
             watchlist_where_clauses.append("alert_time >= now() - INTERVAL 15 MINUTE")
@@ -339,8 +358,12 @@ async def get_pre_spike_dashboard(
         # 4. Build price spike filters
         # Always enforce a minimum 7-day bound to prevent full table scans
         spike_where_clauses = ["event_start >= now() - INTERVAL 7 DAY"]
-        if symbol:
-            spike_where_clauses.append("symbol = {symbol:String}")
+        if symbol_list:
+            if len(symbol_list) == 1:
+                spike_where_clauses.append("symbol = {symbol:String}")
+            else:
+                quoted = ", ".join(f"'{s}'" for s in symbol_list)
+                spike_where_clauses.append(f"symbol IN ({quoted})")
 
         if tf == "15M":
             spike_where_clauses.append("event_start >= now() - INTERVAL 15 MINUTE")
@@ -479,13 +502,17 @@ async def get_pre_spike_dashboard(
                     item[k] = float(v) if hasattr(v, "as_tuple") else v
             alerts.append(item)
 
-        # Query all unique symbols matching the active date/timeframe/type filters
-        watchlist_where_no_sym_clauses = [c for c in watchlist_where_clauses if "symbol =" not in c]
+        # Query unique symbols from v_pre_spike_alerts_ui ONLY.
+        # v_price_spikes symbols are intentionally excluded here — the left watchlist
+        # table is strictly sourced from v_pre_spike_alerts_ui and the symbol dropdown
+        # must reflect only those symbols so there is no cross-contamination.
+        watchlist_where_no_sym_clauses = [
+            c for c in watchlist_where_clauses
+            if "symbol =" not in c and "symbol IN" not in c
+        ]
         watchlist_where_no_sym_str = " AND ".join(watchlist_where_no_sym_clauses)
-        spike_where_no_sym_clauses = [c for c in spike_where_clauses if "symbol =" not in c]
-        spike_where_no_sym_str = " AND ".join(spike_where_no_sym_clauses)
 
-        # ---- Simple in‑memory cache (TTL 5 minutes) ----
+        # ---- Simple in‑memory cache (TTL 5 minutes) ----
         CACHE_TTL_SECONDS = 300
         if not hasattr(__import__('builtins'), '_symbol_cache'):
             # initialise cache on first request
@@ -495,12 +522,11 @@ async def get_pre_spike_dashboard(
         if cache["data"] is not None and (now_ts - cache["ts"]) < CACHE_TTL_SECONDS:
             symbols = cache["data"]
         else:
+            # Symbols come exclusively from v_pre_spike_alerts_ui — NOT v_price_spikes.
             symbols_query = f"""
-            SELECT distinct symbol FROM (
-                SELECT symbol FROM {db_name}.v_pre_spike_alerts_ui WHERE {watchlist_where_no_sym_str}
-                UNION ALL
-                SELECT symbol FROM {db_name}.v_price_spikes WHERE {spike_where_no_sym_str}
-            )
+            SELECT distinct symbol
+            FROM {db_name}.v_pre_spike_alerts_ui
+            WHERE {watchlist_where_no_sym_str}
             ORDER BY symbol ASC
             """
             symbols_res = ch_query(symbols_query, parameters=params)
@@ -508,7 +534,7 @@ async def get_pre_spike_dashboard(
             # store in cache
             cache["data"] = symbols
             cache["ts"] = now_ts
-        # --------------------------------------------
+        # ------------------------------------------------------------------------
             
         return {
             "kpis": {
