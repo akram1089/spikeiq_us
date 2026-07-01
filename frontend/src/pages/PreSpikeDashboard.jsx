@@ -590,7 +590,6 @@ export default function PreSpikeDashboard() {
   ])
 
   // (Test Alert button removed — was only needed for development)
-  }
 
   const handleTogglePush = async () => {
     if (pushEnabled) {
